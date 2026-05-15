@@ -27,9 +27,27 @@ async def get_feature_importance(strategy_id: int, db: AsyncSession = Depends(ge
         .limit(1)
     )
     run = runs.scalar_one_or_none()
-    if not run or not run.feature_importance:
-        return {"strategy_id": strategy_id, "feature_importance": {}}
-    return {"strategy_id": strategy_id, "feature_importance": run.feature_importance}
+    feature_importance = run.feature_importance if (run and run.feature_importance) else {}
+
+    # Aggregate shap_importance across walk-forward folds (mean per feature)
+    folds_q = await db.execute(
+        select(WalkForwardResult).where(WalkForwardResult.strategy_id == strategy_id)
+    )
+    folds = folds_q.scalars().all()
+    shap_acc: dict[str, list[float]] = {}
+    for fold in folds:
+        shap = (fold.metrics or {}).get("shap_importance")
+        if not shap:
+            continue
+        for feat, val in shap.items():
+            shap_acc.setdefault(feat, []).append(float(val))
+    shap_importance = {f: round(sum(v) / len(v), 4) for f, v in shap_acc.items()}
+
+    return {
+        "strategy_id": strategy_id,
+        "feature_importance": feature_importance,
+        "shap_importance": shap_importance,
+    }
 
 
 @router.get("/walk-forward/{strategy_id}")
