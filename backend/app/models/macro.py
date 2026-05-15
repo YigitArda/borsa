@@ -10,7 +10,7 @@ class MacroIndicator(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     indicator_code: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    # VIX, TNX_10Y, SP500, NASDAQ, FED_RATE, CPI_YOY
+    # VIX, TNX_10Y, SP500, NASDAQ, FED_RATE, CPI_YOY, YIELD_CURVE, CREDIT_SPREAD_BBB, OECD_CLI_USA
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     value: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

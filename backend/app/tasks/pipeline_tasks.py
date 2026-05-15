@@ -116,13 +116,55 @@ def optimize_hyperparams(
 
 
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_macro")
-def ingest_macro(self, start: str = "2010-01-01"):
+def ingest_macro(self, start: str = "2010-01-01", include_external_sources: bool = True):
     from app.services.macro_data import MacroDataService
     session = _get_sync_session()
     try:
         svc = MacroDataService(session)
-        n = svc.ingest_macro(start=start)
+        n = svc.ingest_macro(start=start, include_external_sources=include_external_sources)
         return {"status": "ok", "rows": n}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_fred")
+def ingest_fred(self, start: str = "2010-01-01"):
+    from app.services.fred_data import FREDDataService
+
+    session = _get_sync_session()
+    try:
+        if not settings.fred_api_key:
+            logger.warning("FRED_API_KEY is not configured; skipping FRED ingest")
+            return {"status": "skipped", "reason": "fred_api_key_missing", "results": {}}
+
+        svc = FREDDataService(session)
+        results = svc.ingest_all(start=start)
+        return {"status": "ok", "results": results}
+    except ImportError as exc:
+        logger.warning("FRED ingest skipped: %s", exc)
+        return {"status": "skipped", "reason": "fredapi_missing", "results": {}}
+    except Exception as exc:
+        logger.error("FRED ingest failed: %s", exc, exc_info=True)
+        return {"status": "failed", "reason": str(exc)}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_dbnomics")
+def ingest_dbnomics(self, start: str = "2010-01-01"):
+    from app.services.dbnomics_data import DBnomicsDataService
+
+    session = _get_sync_session()
+    try:
+        svc = DBnomicsDataService(session)
+        results = svc.ingest_all(start=start)
+        return {"status": "ok", "results": results}
+    except ImportError as exc:
+        logger.warning("DBnomics ingest skipped: %s", exc)
+        return {"status": "skipped", "reason": "dbnomics_missing", "results": {}}
+    except Exception as exc:
+        logger.error("DBnomics ingest failed: %s", exc, exc_info=True)
+        return {"status": "failed", "reason": str(exc)}
     finally:
         session.close()
 
@@ -708,7 +750,9 @@ def run_full_pipeline(
     workflow = chain(
         snapshot_universe.si(tickers=tickers),
         ingest_prices.si(tickers=tickers, start=start),
-        ingest_macro.si(start=start),
+        ingest_fred.si(start=start),
+        ingest_dbnomics.si(start=start),
+        ingest_macro.si(start=start, include_external_sources=False),
         ingest_news.si(tickers=tickers),
         ingest_social.si(tickers=tickers),
         ingest_financials.si(tickers=tickers),
@@ -734,6 +778,8 @@ def run_full_pipeline(
         "steps": [
             "snapshot_universe",
             "ingest_prices",
+            "ingest_fred",
+            "ingest_dbnomics",
             "ingest_macro",
             "ingest_news",
             "ingest_social",

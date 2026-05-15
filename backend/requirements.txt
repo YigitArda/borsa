@@ -11,6 +11,8 @@ email-validator==2.2.0
 
 # Data & ML
 yfinance==0.2.44
+fredapi==0.5.1
+dbnomics==1.2.7
 pandas==2.2.3
 numpy==1.26.4
 pandas-ta==0.3.14b

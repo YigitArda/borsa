@@ -13,6 +13,7 @@ Optional, but used by parts of the app:
 
 - `API_KEY`
 - `NEXT_PUBLIC_API_URL`
+- `FRED_API_KEY`
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`
 - `SLACK_WEBHOOK_URL`
 
@@ -50,5 +51,6 @@ npm run build
 ## Notes
 
 - `JWT_SECRET` is required for login and token verification.
+- `FRED_API_KEY` unlocks point-in-time macro ingestion from FRED; DBnomics runs without a key.
 - Notification preferences are stored in the database and shared across devices.
 - `data-status` reads the backend summary endpoint instead of using a stale snapshot.

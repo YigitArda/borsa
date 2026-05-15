@@ -26,7 +26,10 @@ router = APIRouter(prefix="/data-quality", tags=["data-quality"])
 
 TECHNICAL_PREFIXES = ("rsi_", "macd", "sma_", "ema_", "bb_", "atr_", "volume_", "return_", "momentum", "high_52w", "low_52w", "trend_strength", "price_to_sma", "realized_vol")
 FINANCIAL_PREFIXES = ("pe_", "forward_pe", "price_to_", "ev_to_", "gross_margin", "operating_margin", "net_margin", "roe", "roa", "revenue_growth", "earnings_growth", "debt_to_equity", "current_ratio", "beta", "market_cap")
-MACRO_PREFIXES = ("vix", "VIX", "tnx", "TNX", "fed_", "FED_", "risk_on", "sp500_trend", "nasdaq_trend", "cpi_proxy", "sector_")
+MACRO_PREFIXES = (
+    "vix", "VIX", "tnx", "TNX", "fed_", "FED_", "yield_", "credit_", "oecd_",
+    "risk_on", "sp500_trend", "nasdaq_trend", "cpi_proxy", "sector_",
+)
 NEWS_SOCIAL_PREFIXES = ("news_", "social_", "sentiment")
 ALTERNATIVE_FEATURES = set(
     BEHAVIORAL_FEATURES

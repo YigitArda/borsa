@@ -34,7 +34,7 @@ from app.services.alpha_factor_combiner import AlphaFactorCombiner, ALPHA_COMBO_
 
 logger = logging.getLogger(__name__)
 
-FEATURE_SET_VERSION = "v5"  # bumped: alpha factors (momentum+lowvol, PEAD, short interest)
+FEATURE_SET_VERSION = "v6"  # bumped: macro features expanded with FRED/DBnomics series
 
 TECHNICAL_FEATURES = [
     "rsi_14", "macd", "macd_signal", "macd_hist",
@@ -67,6 +67,10 @@ MACRO_FEATURES = [
     "VIX", "VIX_WEEKLY", "VIX_CHANGE_W", "TNX_10Y", "FED_RATE_PROXY",
     "RISK_ON_SCORE", "sp500_trend_20w", "nasdaq_trend_20w",
     "cpi_proxy_trend_26w",
+    "yield_curve_value", "yield_curve_inverted",
+    "credit_spread", "credit_spread_zscore",
+    "fed_rate", "fed_rate_change",
+    "oecd_cli", "oecd_cli_momentum",
     "sector_xlk_trend20w", "sector_xlf_trend20w", "sector_xle_trend20w",
     "sector_xlv_trend20w", "sector_xli_trend20w", "sector_xlp_trend20w",
     "sector_xly_trend20w", "sector_xlu_trend20w", "sector_xlre_trend20w",

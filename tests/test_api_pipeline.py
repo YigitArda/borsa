@@ -34,6 +34,20 @@ class TestPipelineEndpoints:
     def test_pipeline_macro(self, client: TestClient) -> None:
         response = client.post("/pipeline/macro")
         assert response.status_code in (200, 202)
+        data = response.json()
+        assert "task_id" in data or "status" in data
+
+    def test_pipeline_ingest_fred(self, client: TestClient) -> None:
+        response = client.post("/pipeline/ingest-fred")
+        assert response.status_code in (200, 202)
+        data = response.json()
+        assert "task_id" in data or "status" in data
+
+    def test_pipeline_ingest_dbnomics(self, client: TestClient) -> None:
+        response = client.post("/pipeline/ingest-dbnomics")
+        assert response.status_code in (200, 202)
+        data = response.json()
+        assert "task_id" in data or "status" in data
 
     def test_pipeline_news(self, client: TestClient) -> None:
         response = client.post("/pipeline/news")

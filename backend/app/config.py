@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     # API auth — set API_KEY env var to enable Bearer token protection on write routes
     api_key: str | None = None
     jwt_secret: str | None = None
+    fred_api_key: str | None = None
 
     # Notification settings
     smtp_host: str | None = None

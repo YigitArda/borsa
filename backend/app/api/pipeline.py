@@ -33,9 +33,23 @@ async def trigger_features(body: TickerList | None = None):
 
 
 @router.post("/macro")
-async def trigger_macro(start: str = "2010-01-01"):
+async def trigger_macro(start: str = "2010-01-01", include_external_sources: bool = True):
     from app.tasks.pipeline_tasks import ingest_macro
-    task = enqueue_task(ingest_macro, start=start)
+    task = enqueue_task(ingest_macro, start=start, include_external_sources=include_external_sources)
+    return {"task_id": task.id, "status": "queued"}
+
+
+@router.post("/ingest-fred")
+async def trigger_fred(start: str = "2010-01-01"):
+    from app.tasks.pipeline_tasks import ingest_fred
+    task = enqueue_task(ingest_fred, start=start)
+    return {"task_id": task.id, "status": "queued"}
+
+
+@router.post("/ingest-dbnomics")
+async def trigger_dbnomics(start: str = "2010-01-01"):
+    from app.tasks.pipeline_tasks import ingest_dbnomics
+    task = enqueue_task(ingest_dbnomics, start=start)
     return {"task_id": task.id, "status": "queued"}
 
 

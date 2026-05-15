@@ -367,7 +367,17 @@ class DataQualityScorer:
         """Check macro data completeness for the week."""
         details: dict[str, Any] = {}
 
-        expected_indicators = {"VIX", "TNX_10Y", "SP500", "NASDAQ", "FED_RATE", "CPI_YOY"}
+        expected_indicators = {
+            "VIX",
+            "TNX_10Y",
+            "SP500",
+            "NASDAQ",
+            "FED_RATE",
+            "CPI_YOY",
+            "YIELD_CURVE",
+            "CREDIT_SPREAD_BBB",
+            "OECD_CLI_USA",
+        }
         week_start = week - timedelta(days=6)
 
         present = (
