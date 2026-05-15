@@ -232,7 +232,12 @@ class ResearchLoop:
 
     def _compute_holdout_cutoff(self) -> date:
         from dateutil.relativedelta import relativedelta
-        return date.today() - relativedelta(months=HOLDOUT_MONTHS)
+        cutoff = date.today() - relativedelta(months=HOLDOUT_MONTHS)
+        logger.info(
+            "Holdout cutoff set to: %s (last %d months protected from training)",
+            cutoff, HOLDOUT_MONTHS,
+        )
+        return cutoff
 
     def _consume_trial_budget(self) -> tuple[bool, dict]:
         today = date.today()
@@ -372,6 +377,7 @@ class ResearchLoop:
         folds = trainer.walk_forward(
             self.tickers,
             min_train_years=5,
+            holdout_cutoff=self._holdout_cutoff,
         )
 
         if not folds:
@@ -468,7 +474,7 @@ class ResearchLoop:
     def evaluate_config(self, config: dict, parent_strategy_id: int | None = None, generation: int = 0) -> tuple[list[dict], int | None]:
         """Evaluate and persist one concrete config for genetic/population search."""
         trainer = ModelTrainer(self.session, config)
-        folds = trainer.walk_forward(self.tickers, min_train_years=5)
+        folds = trainer.walk_forward(self.tickers, min_train_years=5, holdout_cutoff=self._holdout_cutoff)
         if not folds:
             return [], None
 

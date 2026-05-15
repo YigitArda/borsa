@@ -154,12 +154,33 @@ class MetaPromotionModel:
             logger.info("MetaLearner: only one class in training data — cold start mode")
             return False
 
+        n_positive = int(y.sum())
+        n_negative = int((y == 0).sum())
+        logger.info(
+            "MetaLearner eğitim verisi: %d pozitif, %d negatif (toplam %d)",
+            n_positive, n_negative, len(y),
+        )
+        if n_negative == 0:
+            logger.error(
+                "UYARI: Meta-learner sadece pozitif örnekler görüyor! "
+                "promotion.py'de save_training_example() çağrısı eksik."
+            )
+            return False
+        if n_positive / len(y) > 0.8:
+            logger.warning(
+                "Meta-learner dengesiz: %.1f%% pozitif — class_weight='balanced' uygulanıyor.",
+                n_positive / len(y) * 100,
+            )
+
         self._scaler = StandardScaler()
         X_scaled = self._scaler.fit_transform(X)
-        self._model = LogisticRegression(C=1.0, max_iter=500, random_state=42)
+        self._model = LogisticRegression(
+            C=1.0, max_iter=500, random_state=42,
+            class_weight="balanced",
+        )
         self._model.fit(X_scaled, y)
         logger.info("MetaLearner: fitted on %d samples (pos=%d, neg=%d)",
-                    len(y), int(y.sum()), int((y == 0).sum()))
+                    len(y), n_positive, n_negative)
         return True
 
     def predict(
@@ -200,6 +221,40 @@ class MetaPromotionModel:
         ]
         coefs = self._model.coef_[0]
         return {name: round(float(abs(c)), 4) for name, c in zip(feature_names, coefs)}
+
+    def save_training_example(
+        self,
+        strategy_id: int,
+        fold_metrics: list[dict],
+        notes: dict,
+        n_features: int,
+        label: int,
+        paper_hit_rate: float | None = None,
+    ) -> None:
+        """
+        Save a training example with an explicit label (0=failure, 1=success).
+        Called from promotion gate so ALL strategies are recorded — not just those
+        that reach paper trading with a measurable hit rate.
+        """
+        from app.models.meta_learner_data import MetaLearnerTrainingData
+
+        features_vec = _extract_features(fold_metrics, notes, n_features)
+
+        row = self.session.execute(
+            select(MetaLearnerTrainingData).where(MetaLearnerTrainingData.strategy_id == strategy_id)
+        ).scalar_one_or_none()
+        if row is None:
+            row = MetaLearnerTrainingData(strategy_id=strategy_id)
+            self.session.add(row)
+        row.features_json = features_vec
+        row.label = label
+        row.paper_hit_rate = paper_hit_rate
+        row.created_at = datetime.now(tz=timezone.utc).replace(tzinfo=None)
+        self.session.commit()
+        logger.info(
+            "MetaLearner: save_training_example strategy=%d label=%d hit_rate=%s",
+            strategy_id, label, f"{paper_hit_rate:.3f}" if paper_hit_rate is not None else "N/A",
+        )
 
     def n_samples(self) -> int:
         """Number of training examples in DB."""

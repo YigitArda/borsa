@@ -1,7 +1,7 @@
 """Add pead_signals and short_interest_data tables for alpha factors
 
-Revision ID: 0019
-Revises: 0018
+Revision ID: 0020
+Revises: 0019
 Create Date: 2026-05-15
 
 Tables:
@@ -13,8 +13,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0019"
-down_revision: Union[str, None] = "0018"
+revision: str = "0020"
+down_revision: Union[str, None] = "0019"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

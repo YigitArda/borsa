@@ -181,11 +181,15 @@ class PaperTradingService:
         if not strategy:
             return
         paper = self.summary(strategy_id=strategy_id)
+        closed = paper.get("closed", 0)
+        if closed == 0:
+            return  # no closed trades yet — cannot determine outcome
+
         hit_rate = paper.get("hit_rate_2pct")
-        if hit_rate is None:
-            return
+        calibration_error = paper.get("calibration_error_2pct")
 
         import json
+        from app.config import settings
 
         notes = {}
         if strategy.notes:
@@ -199,13 +203,23 @@ class PaperTradingService:
             .order_by(WalkForwardResult.fold)
         ).scalars().all()
         fold_metrics = [f.metrics for f in folds if f.metrics]
+
+        is_successful = (
+            hit_rate is not None
+            and hit_rate >= settings.min_paper_hit_rate_2pct
+            and calibration_error is not None
+            and abs(calibration_error) <= settings.max_paper_calibration_error_2pct
+        )
+        label = 1 if is_successful else 0
+
         try:
-            MetaPromotionModel(self.session).record_outcome(
+            MetaPromotionModel(self.session).save_training_example(
                 strategy_id=strategy_id,
                 fold_metrics=fold_metrics,
                 notes=notes,
                 n_features=len((strategy.config or {}).get("features", [])),
-                paper_hit_rate=float(hit_rate),
+                label=label,
+                paper_hit_rate=float(hit_rate) if hit_rate is not None else None,
             )
         except Exception as exc:
             logger.warning("Meta learner outcome recording failed for strategy %s: %s", strategy_id, exc)

@@ -138,7 +138,13 @@ class ModelTrainer:
         merged["week_ending"] = pd.to_datetime(merged["week_ending"])
         return merged.dropna(subset=["label"])
 
-    def walk_forward(self, tickers: list[str], min_train_years: int = 5, apply_liquidity_filter: bool = True) -> list[WalkForwardFold]:
+    def walk_forward(
+        self,
+        tickers: list[str],
+        min_train_years: int = 5,
+        apply_liquidity_filter: bool = True,
+        holdout_cutoff=None,
+    ) -> list[WalkForwardFold]:
         if apply_liquidity_filter:
             from app.services.data_ingestion import DataIngestionService
             svc = DataIngestionService(self.session)
@@ -151,6 +157,19 @@ class ModelTrainer:
         if df.empty:
             logger.warning("Empty dataset, skipping walk-forward")
             return []
+
+        # HOLDOUT ENFORCEMENT — son N ayı training/validation'dan kapat
+        if holdout_cutoff is not None:
+            original_len = len(df)
+            df = df[df["week_ending"] < pd.Timestamp(holdout_cutoff)]
+            logger.info(
+                "Holdout enforcement: %d rows removed (cutoff: %s)",
+                original_len - len(df),
+                holdout_cutoff,
+            )
+            if df.empty:
+                logger.warning("No data before holdout cutoff — training aborted")
+                return []
 
         df = df.sort_values("week_ending")
         all_weeks = sorted(df["week_ending"].unique())
@@ -583,3 +602,56 @@ class ModelTrainer:
     def load_model(path: str):
         with open(path, "rb") as f:
             return pickle.load(f)
+
+
+class HoldoutValidator:
+    """Son N ayı hiç dokunulmadan tutar — sadece final OOS doğrulama için."""
+
+    def __init__(self, session, holdout_months: int = 18):
+        self.session = session
+        self.holdout_months = holdout_months
+
+    def get_holdout_data(self, tickers: list[str], strategy_config: dict) -> pd.DataFrame:
+        from dateutil.relativedelta import relativedelta
+        cutoff = date.today() - relativedelta(months=self.holdout_months)
+        trainer = ModelTrainer(self.session, strategy_config)
+        df = trainer.load_dataset(tickers)
+        holdout_df = df[df["week_ending"] >= pd.Timestamp(cutoff)]
+        logger.info(
+            "Holdout data: %d rows from %s to %s",
+            len(holdout_df), cutoff, date.today(),
+        )
+        return holdout_df
+
+    def evaluate_on_holdout(self, strategy_id: int, tickers: list[str]) -> dict:
+        """
+        Tüm research tamamlandıktan sonra holdout döneminde bir kez çağrıl.
+        Sadece promotion kararından ÖNCE kullanılmalı.
+        """
+        from dateutil.relativedelta import relativedelta
+        from app.models.strategy import Strategy
+        strategy = self.session.get(Strategy, strategy_id)
+        if not strategy:
+            return {"error": "strategy not found"}
+
+        cutoff = date.today() - relativedelta(months=self.holdout_months)
+        trainer = ModelTrainer(self.session, strategy.config)
+        full_df = trainer.load_dataset(tickers)
+
+        train_df = full_df[full_df["week_ending"] < pd.Timestamp(cutoff)]
+        holdout_df = full_df[full_df["week_ending"] >= pd.Timestamp(cutoff)]
+
+        if len(train_df) < 100:
+            return {"error": "insufficient training data"}
+        if holdout_df.empty:
+            return {"error": "no holdout data available"}
+
+        model, scaler = trainer._train(train_df)
+        metrics = trainer._evaluate(model, scaler, holdout_df, tickers)
+
+        return {
+            "strategy_id": strategy_id,
+            "holdout_start": str(cutoff),
+            "holdout_rows": len(holdout_df),
+            "holdout_metrics": {k: v for k, v in metrics.items() if not k.startswith("_")},
+        }

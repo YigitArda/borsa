@@ -123,6 +123,28 @@ class PromotionGate:
         if not meta_passed:
             reasons.append(meta_reason)
 
+        # HOLDOUT VALIDATION — gerçek OOS performans kontrolü
+        from app.services.model_training import HoldoutValidator
+        holdout_result = {}
+        holdout_sharpe = None
+        try:
+            validator = HoldoutValidator(self.session, getattr(settings, "holdout_months", 18))
+            holdout_result = validator.evaluate_on_holdout(
+                strategy_id, settings.mvp_tickers
+            )
+            holdout_sharpe = (
+                holdout_result.get("holdout_metrics", {}).get("sharpe")
+                if "error" not in holdout_result
+                else None
+            )
+            if holdout_sharpe is not None and holdout_sharpe < 0.3:
+                reasons.append(
+                    f"holdout Sharpe {holdout_sharpe:.2f} < 0.3 (gerçek OOS performans yetersiz)"
+                )
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Holdout validation failed: %s", exc)
+
         summary = {
             **research_summary,
             "deflated_sharpe": notes.get("deflated_sharpe"),
@@ -139,6 +161,8 @@ class PromotionGate:
                 "confidence": round(meta_confidence, 4),
                 "reason": meta_reason,
             },
+            "holdout_validation": holdout_result,
+            "holdout_sharpe": holdout_sharpe,
         }
         if reasons:
             summary["reason"] = "; ".join(reasons)
@@ -176,6 +200,32 @@ class PromotionGate:
 
     def promote(self, strategy_id: int) -> tuple[bool, dict]:
         passed, summary = self.evaluate(strategy_id)
+
+        # Record outcome in meta-learner regardless of pass/fail so training data
+        # includes both successes and failures (prevents asymmetric training).
+        try:
+            strategy_for_ml = self.session.get(Strategy, strategy_id)
+            if strategy_for_ml:
+                folds = self.session.query(WalkForwardResult).filter(
+                    WalkForwardResult.strategy_id == strategy_id
+                ).order_by(WalkForwardResult.fold).all()
+                fold_metrics = [f.metrics for f in folds if f.metrics]
+                notes = _parse_notes(strategy_for_ml.notes)
+                paper_hit_rate = summary.get("paper", {}).get("hit_rate_2pct")
+                MetaPromotionModel(self.session).save_training_example(
+                    strategy_id=strategy_id,
+                    fold_metrics=fold_metrics,
+                    notes=notes,
+                    n_features=len((strategy_for_ml.config or {}).get("features", [])),
+                    label=1 if passed else 0,
+                    paper_hit_rate=paper_hit_rate,
+                )
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "Meta-learner training example save failed for strategy %d: %s", strategy_id, exc
+            )
+
         if not passed:
             return False, summary
 
