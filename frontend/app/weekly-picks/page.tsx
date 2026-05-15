@@ -1,4 +1,6 @@
 import { api } from "@/lib/api";
+import Tooltip from "@/components/Tooltip";
+import { getTooltip } from "@/lib/tooltips";
 
 export default async function WeeklyPicksPage() {
   const picks = await api.get<any[]>("/weekly-picks").catch(() => []);
@@ -36,10 +38,10 @@ export default async function WeeklyPicksPage() {
                   <th>Ticker</th>
                   <th>Şirket</th>
                   <th>Sektör</th>
-                  <th>P(≥%2)</th>
-                  <th>P(≤-%2)</th>
-                  <th>Beklenen Getiri</th>
-                  <th>Güven</th>
+                  <th><Tooltip text={getTooltip("P(≥%2)") || "1 haftada %2+ getiri olasiligi"} position="top">P(≥%2)</Tooltip></th>
+                  <th><Tooltip text="1 haftada %2+ kayip olasiligi" position="top">P(≤-%2)</Tooltip></th>
+                  <th><Tooltip text={getTooltip("Beklenen Getiri") || "Model tahmini ortalama getiri"} position="top">Beklenen Getiri</Tooltip></th>
+                  <th><Tooltip text={getTooltip("Güven") || "Model güven seviyesi"} position="top">Güven</Tooltip></th>
                   <th>Sinyal Özeti</th>
                 </tr>
               </thead>
@@ -100,10 +102,10 @@ export default async function WeeklyPicksPage() {
                   <th>Toplam</th>
                   <th>Açık</th>
                   <th>Kapandı</th>
-                  <th>Hit Rate ≥%2</th>
+                  <th><Tooltip text={getTooltip("Hit Rate") || "Hedef %2 getiriyi yakalama orani"} position="top">Hit Rate ≥%2</Tooltip></th>
                   <th>Ort. Olasılık</th>
                   <th>Ort. Gerçekleşen</th>
-                  <th>Kalibrasyon Hatası</th>
+                  <th><Tooltip text={getTooltip("Kalibrasyon Hatası") || "Tahmin ile gerceklesme arasi fark"} position="top">Kalibrasyon Hatası</Tooltip></th>
                 </tr>
               </thead>
               <tbody>

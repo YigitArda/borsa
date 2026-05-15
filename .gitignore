@@ -11,6 +11,7 @@ models_store/
 .pytest_tmp/
 .pytest_tmp*/
 .pytest_cache/
+*.log
 
 node_modules/
 .next/

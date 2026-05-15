@@ -1,6 +1,7 @@
 import "./globals.css";
 import Link from "next/link";
 import type { Metadata } from "next";
+import Tooltip from "@/components/Tooltip";
 
 export const metadata: Metadata = {
   title: "Borsa Research Engine v1.0",
@@ -8,42 +9,44 @@ export const metadata: Metadata = {
 };
 
 const navLinks = [
-  { href: "/", label: "Ana Sayfa" },
-  { href: "/weekly-picks", label: "Haftalık Sinyaller" },
-  { href: "/strategy-lab", label: "Strateji Lab" },
-  { href: "/model-comparison", label: "Model Karşılaştırma" },
-  { href: "/feature-importance", label: "Feature Önemi" },
-  { href: "/risk-warnings", label: "Risk Uyarıları" },
-  { href: "/data-quality", label: "Veri Kalitesi" },
-  { href: "/backtest", label: "Backtest" },
+  { href: "/", label: "Ana Sayfa", tip: "Sistem özeti, takip edilen hisseler ve paper trading durumu" },
+  { href: "/weekly-picks", label: "Haftalık Sinyaller", tip: "Modelin bu hafta için ürettiği alım/satım sinyalleri" },
+  { href: "/strategy-lab", label: "Strateji Lab", tip: "Backtest çalıştır, feature seç, araştırma döngüsü başlat" },
+  { href: "/model-comparison", label: "Model Karşılaştırma", tip: "Farklı modellerin performanslarını karşılaştır" },
+  { href: "/feature-importance", label: "Feature Önemi", tip: "Hangi feature'lar model tahmininde en etkili" },
+  { href: "/risk-warnings", label: "Risk Uyarıları", tip: "Sistem riskleri, kill switch durumu ve uyarılar" },
+  { href: "/data-quality", label: "Veri Kalitesi", tip: "Veri eksiklikleri, tutarsızlıklar ve kalite skorları" },
+  { href: "/data-status", label: "Veri Durumu", tip: "Tüm veri kaynakları, kapsamları ve sistem durumu" },
+  { href: "/backtest", label: "Backtest", tip: "Geçmişe dönük strateji testleri ve sonuçları" },
 ];
 
 const sidebarSections = [
   {
     title: "📋 Ana Menü",
     links: [
-      { href: "/", label: "🏠 Ana Sayfa" },
-      { href: "/weekly-picks", label: "📈 Haftalık Sinyaller" },
-      { href: "/strategy-lab", label: "🔬 Strateji Lab" },
-      { href: "/model-comparison", label: "📊 Model Karşılaştırma" },
+      { href: "/", label: "🏠 Ana Sayfa", tip: "Sistem özeti ve paper trading durumu" },
+      { href: "/weekly-picks", label: "📈 Haftalık Sinyaller", tip: "Bu haftanın model sinyalleri" },
+      { href: "/strategy-lab", label: "🔬 Strateji Lab", tip: "Backtest ve araştırma döngüsü" },
+      { href: "/model-comparison", label: "📊 Model Karşılaştırma", tip: "Model performans karşılaştırması" },
     ],
   },
   {
     title: "🔍 Araştırma",
     links: [
-      { href: "/feature-importance", label: "⭐ Feature Önemi" },
-      { href: "/risk-warnings", label: "⚠️ Risk Uyarıları" },
-      { href: "/data-quality", label: "📋 Veri Kalitesi" },
-      { href: "/backtest", label: "🗂️ Backtest" },
+      { href: "/feature-importance", label: "⭐ Feature Önemi", tip: "Feature etki analizi" },
+      { href: "/risk-warnings", label: "⚠️ Risk Uyarıları", tip: "Risk durumu ve uyarılar" },
+      { href: "/data-quality", label: "📋 Veri Kalitesi", tip: "Veri kalite skorları" },
+      { href: "/data-status", label: "📊 Veri Durumu", tip: "Veri kaynakları ve kapsam" },
+      { href: "/backtest", label: "🗂️ Backtest", tip: "Geçmiş strateji testleri" },
     ],
   },
   {
     title: "⚙️ Sistem",
     links: [
-      { href: "/admin", label: "👤 Admin Panel" },
-      { href: "/admin/jobs", label: "💼 İşler" },
-      { href: "/admin/notifications", label: "🔔 Bildirimler" },
-      { href: "/stocks", label: "📦 Hisseler" },
+      { href: "/admin", label: "👤 Admin Panel", tip: "Yönetim paneli" },
+      { href: "/admin/jobs", label: "💼 İşler", tip: "Celery iş durumları" },
+      { href: "/admin/notifications", label: "🔔 Bildirimler", tip: "Sistem bildirimleri" },
+      { href: "/stocks", label: "📦 Hisseler", tip: "Tüm hisseler listesi" },
     ],
   },
 ];
@@ -83,13 +86,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           padding: "2px 6px", display: "flex", gap: "0"
         }}>
           {navLinks.map(l => (
-            <Link key={l.href} href={l.href} style={{
-              padding: "2px 10px", fontSize: "11px",
-              fontFamily: "Tahoma,sans-serif", color: "#000",
-              textDecoration: "none", display: "block"
-            }}>
-              {l.label}
-            </Link>
+            <Tooltip key={l.href} text={l.tip} position="bottom">
+              <Link href={l.href} style={{
+                padding: "2px 10px", fontSize: "11px",
+                fontFamily: "Tahoma,sans-serif", color: "#000",
+                textDecoration: "none", display: "block"
+              }}>
+                {l.label}
+              </Link>
+            </Tooltip>
           ))}
         </div>
 
@@ -111,13 +116,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   {section.title}
                 </div>
                 {section.links.map(link => (
-                  <Link key={link.href} href={link.href} style={{
-                    display: "block", padding: "3px 10px", fontSize: "11px",
-                    fontFamily: "Tahoma,sans-serif", color: "#00008b",
-                    textDecoration: "underline"
-                  }}>
-                    {link.label}
-                  </Link>
+                  <Tooltip key={link.href} text={link.tip || link.label} position="right">
+                    <Link href={link.href} style={{
+                      display: "block", padding: "3px 10px", fontSize: "11px",
+                      fontFamily: "Tahoma,sans-serif", color: "#00008b",
+                      textDecoration: "underline"
+                    }}>
+                      {link.label}
+                    </Link>
+                  </Tooltip>
                 ))}
               </div>
             ))}

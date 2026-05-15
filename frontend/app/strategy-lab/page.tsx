@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import EquityChart from "@/components/charts/EquityChart";
+import Tooltip from "@/components/Tooltip";
+import { getTooltip } from "@/lib/tooltips";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -241,9 +243,11 @@ export default function StrategyLab() {
               { label: "Sosyal Duygu", endpoint: "social", body: { tickers: selectedTickers } },
               { label: "🔄 Tümünü Çalıştır", endpoint: "run-all", body: { tickers: selectedTickers } },
             ].map(({ label, endpoint, body }) => (
-              <button key={endpoint} onClick={() => triggerPipeline(endpoint, label, body)}>
-                {label}
-              </button>
+              <Tooltip key={endpoint} text={getTooltip(label) || label} position="top">
+                <button onClick={() => triggerPipeline(endpoint, label, body)}>
+                  {label}
+                </button>
+              </Tooltip>
             ))}
           </div>
           {pipelineStatus && (
@@ -265,17 +269,19 @@ export default function StrategyLab() {
         <div style={sectionBodyStyle}>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "3px" }}>
             {ALL_FEATURE_OPTIONS.map(f => (
-              <button key={f} onClick={() => toggleFeature(f)} style={{
-                padding: "1px 6px", fontSize: "10px", fontFamily: "monospace",
-                border: selectedFeatures.includes(f) ? "1px solid #264d7a" : "1px solid #999",
-                background: selectedFeatures.includes(f)
-                  ? "linear-gradient(to bottom, #4d8a4d, #2d6a2d)"
-                  : "linear-gradient(to bottom, #fff, #d4d0c8)",
-                color: selectedFeatures.includes(f) ? "#fff" : "#000",
-                cursor: "pointer",
-              }}>
-                {f}
-              </button>
+              <Tooltip key={f} text={getTooltip(f) || f} position="top">
+                <button onClick={() => toggleFeature(f)} style={{
+                  padding: "1px 6px", fontSize: "10px", fontFamily: "monospace",
+                  border: selectedFeatures.includes(f) ? "1px solid #264d7a" : "1px solid #999",
+                  background: selectedFeatures.includes(f)
+                    ? "linear-gradient(to bottom, #4d8a4d, #2d6a2d)"
+                    : "linear-gradient(to bottom, #fff, #d4d0c8)",
+                  color: selectedFeatures.includes(f) ? "#fff" : "#000",
+                  cursor: "pointer",
+                }}>
+                  {f}
+                </button>
+              </Tooltip>
             ))}
           </div>
         </div>
@@ -290,15 +296,19 @@ export default function StrategyLab() {
               <tr>
                 <td style={{ padding: "3px 8px 3px 0", fontSize: "11px" }}>Model:</td>
                 <td style={{ padding: "3px 8px 3px 0" }}>
-                  <select value={modelType} onChange={e => setModelType(e.target.value)}>
-                    {MODEL_TYPES.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
+                  <Tooltip text={getTooltip(modelType) || "Makine öğrenmesi modeli"} position="top">
+                    <select value={modelType} onChange={e => setModelType(e.target.value)}>
+                      {MODEL_TYPES.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </Tooltip>
                 </td>
                 <td style={{ padding: "3px 8px 3px 0", fontSize: "11px" }}>Hedef:</td>
                 <td style={{ padding: "3px 8px 3px 0" }}>
-                  <select value={target} onChange={e => setTarget(e.target.value)}>
-                    {TARGETS.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
+                  <Tooltip text={getTooltip(target) || "Tahmin hedefi"} position="top">
+                    <select value={target} onChange={e => setTarget(e.target.value)}>
+                      {TARGETS.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </Tooltip>
                 </td>
                 <td style={{ padding: "3px 8px 3px 0", fontSize: "11px" }}>Holding:</td>
                 <td style={{ padding: "3px 8px 3px 0" }}>

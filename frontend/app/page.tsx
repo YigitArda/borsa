@@ -1,4 +1,6 @@
 import { api } from "@/lib/api";
+import Tooltip from "@/components/Tooltip";
+import { getTooltip } from "@/lib/tooltips";
 
 async function getStocks() {
   try { return await api.get<any[]>("/stocks"); } catch { return []; }
@@ -40,12 +42,12 @@ export default async function HomePage() {
       <table className="data-table" style={{ marginBottom: "12px" }}>
         <thead>
           <tr>
-            <th>📦 Takip Edilen Hisse</th>
-            <th>✅ Promoted Strateji</th>
-            <th>📄 Toplam Trade</th>
-            <th>🎯 Hit Rate (≥%2)</th>
-            <th>💹 Ort. Getiri</th>
-            <th>🔓 Açık Trade</th>
+            <th><Tooltip text="Sistemde izlenen hisse sayisi" position="top">📦 Takip Edilen Hisse</Tooltip></th>
+            <th><Tooltip text="Kabul kapısından geçmiş onaylı strateji sayisi" position="top">✅ Promoted Strateji</Tooltip></th>
+            <th><Tooltip text="Paper trading'de kapandığınız toplam işlem" position="top">📄 Toplam Trade</Tooltip></th>
+            <th><Tooltip text={getTooltip("Hit Rate") || "Hedeflenen %2 getiriyi yakalama orani"} position="top">🎯 Hit Rate (≥%2)</Tooltip></th>
+            <th><Tooltip text="Paper trading'deki ortalama gerceklesen getiri" position="top">💹 Ort. Getiri</Tooltip></th>
+            <th><Tooltip text="Hala acik olan (kapanmamis) pozisyon sayisi" position="top">🔓 Açık Trade</Tooltip></th>
           </tr>
         </thead>
         <tbody>
@@ -81,9 +83,9 @@ export default async function HomePage() {
                 <tr>
                   <th>Hafta</th>
                   <th>Hisse</th>
-                  <th>P(≥%2)</th>
-                  <th>Beklenen Getiri</th>
-                  <th>Gerçekleşen</th>
+                  <th><Tooltip text={getTooltip("P(≥%2)") || "1 haftada %2+ getiri olasiligi"} position="top">P(≥%2)</Tooltip></th>
+                  <th><Tooltip text={getTooltip("Beklenen Getiri") || "Modelin tahmini ortalama getirisi"} position="top">Beklenen Getiri</Tooltip></th>
+                  <th><Tooltip text="Gerceklesen getiri (kapandiysa)" position="top">Gerçekleşen</Tooltip></th>
                   <th>Durum</th>
                 </tr>
               </thead>

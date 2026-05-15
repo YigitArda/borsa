@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import sys
+import shutil
+from uuid import uuid4
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,11 +29,6 @@ from fastapi.testclient import TestClient
 from app.database import Base
 import app.models  # noqa: F401 - ensure all model tables are registered
 from app.main import app
-
-
-def pytest_configure(config):
-    if getattr(config.option, "basetemp", None) is None:
-        config.option.basetemp = str(TEST_TMP / "basetemp")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -64,3 +61,18 @@ def test_user() -> dict:
         "email": "pytest_user@example.com",
         "password": "pytest_password_123",
     }
+
+
+@pytest.fixture
+def tmp_path():
+    """Local replacement for pytest's tmp_path fixture.
+
+    The built-in temp factory has Windows cleanup issues in this workspace, so
+    this fixture provides the minimal Path contract the tests need.
+    """
+    path = TEST_TMP / f"borsa-{os.getpid()}-{uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=False)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
