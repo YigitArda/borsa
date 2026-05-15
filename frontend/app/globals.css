@@ -1,9 +1,118 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Borsa Research Engine — Retro 2000s Theme */
 
-body {
-  background: #0f172a;
-  color: #e2e8f0;
-  font-family: 'Inter', sans-serif;
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  font-family: Verdana, Geneva, Tahoma, sans-serif;
+  font-size: 12px;
+  background: #ececec;
+  color: #000000;
 }
+
+/* Linkler */
+a { color: #00008b; text-decoration: underline; cursor: pointer; }
+a:hover { color: #cc0000; }
+a:visited { color: #551a8b; }
+
+/* Başlıklar */
+h1 { font-size: 14px; font-weight: bold; color: #003366;
+     border-bottom: 2px solid #336699; padding-bottom: 4px; margin-bottom: 10px; }
+h2 { font-size: 13px; font-weight: bold; color: #003366; margin-bottom: 8px; }
+h3 { font-size: 12px; font-weight: bold; color: #336699; margin-bottom: 6px; }
+
+/* Tablolar */
+table.data-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+table.data-table th {
+  background: linear-gradient(to bottom, #6699cc, #336699);
+  color: #ffffff; font-size: 10px; font-weight: bold;
+  padding: 3px 6px; text-align: left;
+  border: 1px solid #264d7a;
+}
+table.data-table td {
+  border: 1px solid #c0c0c0; padding: 3px 6px; font-size: 11px;
+}
+table.data-table tr:nth-child(even) td { background: #e8f0f8; }
+table.data-table tr:hover td { background: #ffffc0; }
+
+/* Butonlar */
+button, .btn {
+  border: 1px solid #666666;
+  background: linear-gradient(to bottom, #ffffff, #d4d0c8);
+  padding: 3px 12px; font-size: 11px;
+  font-family: Verdana, sans-serif;
+  cursor: pointer; color: #000;
+}
+button:hover, .btn:hover { border-color: #336699; background: linear-gradient(to bottom, #e8f0f8, #c8d8e8); }
+button:active, .btn:active { background: linear-gradient(to bottom, #d4d0c8, #ffffff); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Input alanları */
+input[type="text"], input[type="number"], select, textarea {
+  border: 1px inset #999999; padding: 2px 4px;
+  font-size: 11px; font-family: Verdana, sans-serif;
+  background: #ffffff; color: #000000;
+}
+input[type="range"] { cursor: pointer; }
+input[type="checkbox"] { cursor: pointer; }
+
+/* Renkler */
+.text-green { color: #006600; font-weight: bold; }
+.text-red { color: #cc0000; font-weight: bold; }
+.text-blue { color: #003366; }
+.text-muted { color: #666666; }
+
+/* Badge'ler */
+.badge { font-size: 9px; font-weight: bold; padding: 1px 5px;
+         font-family: Tahoma, sans-serif; }
+.badge-success { background: #006600; color: #fff; }
+.badge-danger  { background: #cc0000; color: #fff; }
+.badge-warning { background: #cc9900; color: #fff; }
+.badge-info    { background: #336699; color: #fff; }
+.badge-new     { background: #cc0000; color: #fff; }
+
+/* Kutu */
+.box { border: 1px solid #c0c0c0; margin-bottom: 10px; }
+.box-head {
+  background: linear-gradient(to bottom, #6699cc, #336699);
+  color: #fff; font-size: 11px; font-weight: bold;
+  padding: 3px 8px; font-family: Tahoma, sans-serif;
+}
+.box-body { padding: 8px; background: #fff; }
+
+/* Alert */
+.alert { padding: 6px 10px; font-size: 11px; margin-bottom: 10px;
+         border: 1px solid; font-family: Tahoma, sans-serif; }
+.alert-info    { background: #e8f0f8; border-color: #336699; color: #003366; }
+.alert-warning { background: #ffffc0; border-color: #cc9900; color: #664400; }
+.alert-danger  { background: #ffe8e8; border-color: #cc0000; color: #660000; }
+.alert-success { background: #e8f8e8; border-color: #006600; color: #003300; }
+
+/* Ticker scroll */
+.ticker-bar {
+  background: #000000; color: #00ff00;
+  font-family: 'Courier New', Courier, monospace; font-size: 10px;
+  padding: 3px 8px; overflow: hidden; white-space: nowrap;
+  border-top: 1px solid #333; border-bottom: 1px solid #333;
+}
+
+/* Status bar */
+.status-bar {
+  background: #d4d0c8; border-top: 1px solid #808080;
+  padding: 2px 8px; display: flex; gap: 16px;
+  font-size: 10px; font-family: Tahoma, sans-serif;
+}
+.status-segment { border-right: 1px solid #808080; padding-right: 10px; }
+
+/* Separator */
+.sep { height: 1px; background: #c0c0c0; margin: 8px 0; }
+hr { border: none; border-top: 1px solid #c0c0c0; margin: 8px 0; }
+
+/* Section label */
+.section-label {
+  font-size: 10px; color: #666; font-family: Tahoma, sans-serif;
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;
+}
+
+/* Highlight row */
+.highlight { background: #ffffc0 !important; }
+.selected  { background: #316ac5 !important; color: #fff !important; }

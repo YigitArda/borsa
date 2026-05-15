@@ -1,188 +1,156 @@
 import { api } from "@/lib/api";
-import Link from "next/link";
 
-interface Pick {
-  rank: number;
-  ticker: string;
-  name: string;
-  sector: string;
-  week_starting: string;
-  prob_2pct: number | null;
-  prob_loss_2pct: number | null;
-  expected_return: number | null;
-  confidence: string | null;
-  signal_summary: string | null;
-}
-
-interface PaperTrade {
-  id: number;
-  ticker: string;
-  week_starting: string;
-  rank: number | null;
-  prob_2pct: number | null;
-  expected_return: number | null;
-  realized_return: number | null;
-  status: string;
-  hit_2pct: boolean | null;
-}
-
-interface PaperResponse {
-  summary: {
-    total: number;
-    open: number;
-    pending_data: number;
-    closed: number;
-    hit_rate_2pct: number | null;
-    avg_prob_2pct: number | null;
-    avg_realized_return: number | null;
-    calibration_error_2pct: number | null;
-  };
-  trades: PaperTrade[];
-}
-
-async function getPicks(): Promise<Pick[]> {
-  try { return await api.get<Pick[]>("/weekly-picks"); } catch { return []; }
-}
-
-async function getPaper(): Promise<PaperResponse | null> {
-  try { return await api.get<PaperResponse>("/weekly-picks/paper?limit=25"); } catch { return null; }
-}
-
-function pct(v: number | null) {
-  return v != null ? `${(v * 100).toFixed(1)}%` : "—";
-}
-
-function Badge({ c }: { c: string | null }) {
-  const color = c === "high" ? "text-green-400 bg-green-400/10" : c === "medium" ? "text-yellow-400 bg-yellow-400/10" : "text-slate-400 bg-slate-400/10";
-  return <span className={`text-xs px-2 py-0.5 rounded ${color}`}>{c ?? "low"}</span>;
-}
-
-export default async function WeeklyPicks() {
-  const picks = await getPicks();
-  const paper = await getPaper();
+export default async function WeeklyPicksPage() {
+  const picks = await api.get<any[]>("/weekly-picks").catch(() => []);
+  const paper = await api.get<any>("/weekly-picks/paper?limit=20").catch(() => null);
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Weekly Picks</h1>
-        <p className="text-slate-400 text-sm mt-1">
-          Model-generated candidates. Not financial advice. Research only.
-        </p>
+    <div>
+      <h1>📈 Haftalık Sinyaller</h1>
+
+      <div className="alert alert-info">
+        ℹ <b>Bilgi:</b> Sinyaller her Cuma akşamı güncellenir.
+        Olasılık tahminleri geçmiş veriye dayalıdır, garanti değildir.
       </div>
 
       {picks.length === 0 ? (
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-8 text-center text-slate-400">
-          No picks available yet. Run the pipeline first from the{" "}
-          <Link href="/strategy-lab" className="text-blue-400 hover:underline">Strategy Lab</Link>.
+        <div className="alert alert-warning">
+          ⚠ Bu hafta için sinyal bulunamadı.
+          <a href="/strategy-lab"> Pipeline çalıştırmak için tıklayın.</a>
         </div>
       ) : (
-        <div className="rounded-lg border border-slate-700 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-800 text-slate-400">
-              <tr>
-                <th className="px-4 py-3 text-left">#</th>
-                <th className="px-4 py-3 text-left">Ticker</th>
-                <th className="px-4 py-3 text-left">Sector</th>
-                <th className="px-4 py-3 text-right">P(≥2%)</th>
-                <th className="px-4 py-3 text-right">P(≤-2%)</th>
-                <th className="px-4 py-3 text-right">E[Return]</th>
-                <th className="px-4 py-3 text-center">Confidence</th>
-                <th className="px-4 py-3 text-left">Signal</th>
-              </tr>
-            </thead>
-            <tbody>
-              {picks.map((p) => (
-                <tr key={p.ticker} className="border-t border-slate-700 hover:bg-slate-800/50">
-                  <td className="px-4 py-3 text-slate-400">{p.rank}</td>
-                  <td className="px-4 py-3">
-                    <Link href={`/stocks/${p.ticker}`} className="font-bold text-blue-400 hover:underline">
-                      {p.ticker}
-                    </Link>
-                    <div className="text-xs text-slate-400">{p.name}</div>
-                  </td>
-                  <td className="px-4 py-3 text-slate-400">{p.sector}</td>
-                  <td className="px-4 py-3 text-right text-green-400">{pct(p.prob_2pct)}</td>
-                  <td className="px-4 py-3 text-right text-red-400">{pct(p.prob_loss_2pct)}</td>
-                  <td className={`px-4 py-3 text-right font-medium ${(p.expected_return ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
-                    {pct(p.expected_return)}
-                  </td>
-                  <td className="px-4 py-3 text-center"><Badge c={p.confidence} /></td>
-                  <td className="px-4 py-3 text-xs text-slate-400 max-w-xs truncate">{p.signal_summary ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <div className="rounded-lg border border-slate-700 bg-slate-800 p-5 space-y-4">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold text-white">Paper Forward Test</h2>
-            <p className="text-xs text-slate-400">Predictions compared with realized weekly returns. Paper only.</p>
+        <div className="box">
+          <div className="box-head">
+            📊 Bu Haftanın Sinyalleri
+            {picks[0]?.week_starting && (
+              <span style={{ fontWeight: "normal", marginLeft: "8px" }}>
+                — Hafta: {picks[0].week_starting}
+              </span>
+            )}
           </div>
-          {paper?.summary && (
-            <div className="grid grid-cols-4 gap-2 text-xs">
-              <div className="bg-slate-700/60 rounded p-2">
-                <div className="text-slate-400">Closed</div>
-                <div className="text-white font-mono">{paper.summary.closed}</div>
-              </div>
-              <div className="bg-slate-700/60 rounded p-2">
-                <div className="text-slate-400">Hit &gt;=2%</div>
-                <div className="text-white font-mono">{pct(paper.summary.hit_rate_2pct)}</div>
-              </div>
-              <div className="bg-slate-700/60 rounded p-2">
-                <div className="text-slate-400">Avg Realized</div>
-                <div className="text-white font-mono">{pct(paper.summary.avg_realized_return)}</div>
-              </div>
-              <div className="bg-slate-700/60 rounded p-2">
-                <div className="text-slate-400">Calibration</div>
-                <div className="text-white font-mono">{pct(paper.summary.calibration_error_2pct)}</div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {!paper || paper.trades.length === 0 ? (
-          <p className="text-sm text-slate-400">No paper trades opened yet.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="text-slate-400">
-                <tr className="border-b border-slate-700">
-                  <th className="py-2 text-left">Week</th>
-                  <th className="py-2 text-left">Ticker</th>
-                  <th className="py-2 text-right">P(&gt;=2%)</th>
-                  <th className="py-2 text-right">E[Return]</th>
-                  <th className="py-2 text-right">Realized</th>
-                  <th className="py-2 text-center">Status</th>
+          <div className="box-body" style={{ padding: 0 }}>
+            <table className="data-table" style={{ marginBottom: 0 }}>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Ticker</th>
+                  <th>Şirket</th>
+                  <th>Sektör</th>
+                  <th>P(≥%2)</th>
+                  <th>P(≤-%2)</th>
+                  <th>Beklenen Getiri</th>
+                  <th>Güven</th>
+                  <th>Sinyal Özeti</th>
                 </tr>
               </thead>
               <tbody>
-                {paper.trades.slice(0, 10).map((t) => (
-                  <tr key={t.id} className="border-b border-slate-700/60">
-                    <td className="py-2 text-slate-400 font-mono">{t.week_starting}</td>
-                    <td className="py-2">
-                      <Link href={`/stocks/${t.ticker}`} className="text-blue-400 hover:underline font-mono">
-                        {t.ticker}
-                      </Link>
+                {picks.map((p: any) => (
+                  <tr key={p.ticker}>
+                    <td style={{ color: "#666" }}>{p.rank}</td>
+                    <td>
+                      <b><a href={`/stocks/${p.ticker}`}>{p.ticker}</a></b>
+                      {p.confidence === "high" && <> <span className="badge badge-success">YEN</span></>}
                     </td>
-                    <td className="py-2 text-right text-green-400">{pct(t.prob_2pct)}</td>
-                    <td className="py-2 text-right text-slate-300">{pct(t.expected_return)}</td>
-                    <td className={`py-2 text-right ${((t.realized_return ?? 0) >= 0) ? "text-green-400" : "text-red-400"}`}>
-                      {pct(t.realized_return)}
-                    </td>
-                    <td className="py-2 text-center">
-                      <span className={`px-2 py-0.5 rounded ${t.status === "closed" ? "bg-green-400/10 text-green-400" : "bg-slate-400/10 text-slate-400"}`}>
-                        {t.status}
+                    <td style={{ fontSize: "10px" }}>{p.name}</td>
+                    <td style={{ fontSize: "10px", color: "#336699" }}>{p.sector}</td>
+                    <td>
+                      <span className={p.prob_2pct >= 0.6 ? "text-green" : ""}>
+                        {p.prob_2pct != null ? `${(p.prob_2pct * 100).toFixed(1)}%` : "—"}
                       </span>
+                    </td>
+                    <td>
+                      <span className={p.prob_loss_2pct >= 0.3 ? "text-red" : "text-muted"}>
+                        {p.prob_loss_2pct != null ? `${(p.prob_loss_2pct * 100).toFixed(1)}%` : "—"}
+                      </span>
+                    </td>
+                    <td>
+                      {p.expected_return != null ? (
+                        <span className={p.expected_return >= 0 ? "text-green" : "text-red"}>
+                          {p.expected_return >= 0 ? "+" : ""}{(p.expected_return * 100).toFixed(2)}%
+                        </span>
+                      ) : "—"}
+                    </td>
+                    <td>
+                      <span className={`badge ${
+                        p.confidence === "high" ? "badge-success" :
+                        p.confidence === "medium" ? "badge-warning" : "badge-info"
+                      }`}>
+                        {p.confidence === "high" ? "YÜKSEK" :
+                         p.confidence === "medium" ? "ORTA" : "DÜŞÜK"}
+                      </span>
+                    </td>
+                    <td style={{ fontSize: "10px", color: "#666", maxWidth: "150px" }}>
+                      {p.signal_summary ?? "—"}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        )}
+        </div>
+      )}
+
+      {paper?.summary && (
+        <div className="box" style={{ marginTop: "12px" }}>
+          <div className="box-head">📋 Paper Trading Özeti</div>
+          <div className="box-body">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Toplam</th>
+                  <th>Açık</th>
+                  <th>Kapandı</th>
+                  <th>Hit Rate ≥%2</th>
+                  <th>Ort. Olasılık</th>
+                  <th>Ort. Gerçekleşen</th>
+                  <th>Kalibrasyon Hatası</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><b>{paper.summary.total}</b></td>
+                  <td>{paper.summary.open}</td>
+                  <td>{paper.summary.closed}</td>
+                  <td>
+                    {paper.summary.hit_rate_2pct != null ? (
+                      <span className={paper.summary.hit_rate_2pct >= 0.45 ? "text-green" : "text-red"}>
+                        <b>{(paper.summary.hit_rate_2pct * 100).toFixed(1)}%</b>
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td>
+                    {paper.summary.avg_prob_2pct != null
+                      ? `${(paper.summary.avg_prob_2pct * 100).toFixed(1)}%` : "—"}
+                  </td>
+                  <td>
+                    {paper.summary.avg_realized_return != null ? (
+                      <span className={paper.summary.avg_realized_return >= 0 ? "text-green" : "text-red"}>
+                        {paper.summary.avg_realized_return >= 0 ? "+" : ""}
+                        {(paper.summary.avg_realized_return * 100).toFixed(2)}%
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td>
+                    {paper.summary.calibration_error_2pct != null ? (
+                      <span className={Math.abs(paper.summary.calibration_error_2pct) <= 0.05 ? "text-green" : "text-red"}>
+                        {paper.summary.calibration_error_2pct >= 0 ? "+" : ""}
+                        {(paper.summary.calibration_error_2pct * 100).toFixed(1)}%
+                      </span>
+                    ) : "—"}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div style={{
+        textAlign: "center", padding: "6px", background: "#e8f0f8",
+        border: "1px solid #c0c0c0", fontSize: "10px",
+        fontFamily: "Tahoma,sans-serif", color: "#666", marginTop: "8px"
+      }}>
+        Bu sistem yalnızca araştırma amaçlıdır, yatırım tavsiyesi değildir
       </div>
     </div>
   );

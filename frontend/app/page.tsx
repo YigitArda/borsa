@@ -1,95 +1,165 @@
 import { api } from "@/lib/api";
-import Link from "next/link";
 
-interface Stock {
-  id: number;
-  ticker: string;
-  name: string;
-  sector: string;
+async function getStocks() {
+  try { return await api.get<any[]>("/stocks"); } catch { return []; }
+}
+async function getStrategies() {
+  try { return await api.get<any[]>("/strategies?status=promoted"); } catch { return []; }
+}
+async function getPaper() {
+  try { return await api.get<any>("/weekly-picks/paper?limit=5"); } catch { return null; }
+}
+async function getKillSwitch() {
+  try { return await api.get<any>("/research/kill-switch/status"); } catch { return null; }
 }
 
-interface Strategy {
-  id: number;
-  name: string;
-  status: string;
-  generation: number;
-  notes: string;
-}
+export default async function HomePage() {
+  const [stocks, strategies, paper, killSwitch] = await Promise.all([
+    getStocks(), getStrategies(), getPaper(), getKillSwitch()
+  ]);
 
-async function getStocks(): Promise<Stock[]> {
-  try { return await api.get<Stock[]>("/stocks"); } catch { return []; }
-}
-
-async function getStrategies(): Promise<Strategy[]> {
-  try { return await api.get<Strategy[]>("/strategies?status=promoted"); } catch { return []; }
-}
-
-export default async function Dashboard() {
-  const [stocks, strategies] = await Promise.all([getStocks(), getStrategies()]);
+  const hitRate = paper?.summary?.hit_rate_2pct;
+  const openTrades = paper?.summary?.open ?? 0;
+  const closedTrades = paper?.summary?.closed ?? 0;
+  const avgReturn = paper?.summary?.avg_realized_return;
+  const ksActive = killSwitch?.active ?? false;
 
   return (
-    <div className="space-y-8 max-w-6xl mx-auto">
-      <div>
-        <h1 className="text-2xl font-bold text-white mb-1">Dashboard</h1>
-        <p className="text-slate-400 text-sm">Research-only system. Results are backtested, not live trading.</p>
-      </div>
+    <div>
+      <h1>📊 Ana Sayfa — Araştırma Özeti</h1>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
-        <StatCard label="Stocks Tracked" value={stocks.length} />
-        <StatCard label="Promoted Strategies" value={strategies.length} />
-        <StatCard label="Status" value="Research Mode" highlight />
-      </div>
-
-      {/* Promoted Strategies */}
-      <section>
-        <h2 className="text-lg font-semibold text-white mb-3">Promoted Strategies</h2>
-        {strategies.length === 0 ? (
-          <div className="rounded-lg border border-slate-700 bg-slate-800 p-6 text-slate-400 text-sm">
-            No promoted strategies yet. Start the research loop from{" "}
-            <Link href="/strategy-lab" className="text-blue-400 hover:underline">Strategy Lab</Link>.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {strategies.map((s) => (
-              <div key={s.id} className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-white">{s.name}</span>
-                  <span className="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded">
-                    Generation {s.generation}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 mt-1">{s.notes}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Stock Grid */}
-      <section>
-        <h2 className="text-lg font-semibold text-white mb-3">Universe ({stocks.length} stocks)</h2>
-        <div className="grid grid-cols-4 gap-3">
-          {stocks.map((s) => (
-            <Link key={s.id} href={`/stocks/${s.ticker}`}>
-              <div className="rounded-lg border border-slate-700 bg-slate-800 hover:border-blue-500 transition-colors p-3 cursor-pointer">
-                <div className="font-bold text-blue-400">{s.ticker}</div>
-                <div className="text-xs text-slate-400 truncate">{s.name}</div>
-                <div className="text-xs text-slate-500">{s.sector}</div>
-              </div>
-            </Link>
-          ))}
+      {ksActive && (
+        <div className="alert alert-danger">
+          🛑 <b>DİKKAT:</b> Kill switch aktif — tahmin üretimi durduruldu.
+          {killSwitch?.warnings?.length > 0 && (
+            <> Sebep: {killSwitch.warnings[0]?.reason}</>
+          )}
         </div>
-      </section>
-    </div>
-  );
-}
+      )}
 
-function StatCard({ label, value, highlight }: { label: string; value: string | number; highlight?: boolean }) {
-  return (
-    <div className="rounded-lg border border-slate-700 bg-slate-800 p-5">
-      <div className="text-sm text-slate-400">{label}</div>
-      <div className={`text-2xl font-bold mt-1 ${highlight ? "text-yellow-400" : "text-white"}`}>{value}</div>
+      <table className="data-table" style={{ marginBottom: "12px" }}>
+        <thead>
+          <tr>
+            <th>📦 Takip Edilen Hisse</th>
+            <th>✅ Promoted Strateji</th>
+            <th>📄 Toplam Trade</th>
+            <th>🎯 Hit Rate (≥%2)</th>
+            <th>💹 Ort. Getiri</th>
+            <th>🔓 Açık Trade</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>{stocks.length}</b></td>
+            <td><b>{strategies.length}</b></td>
+            <td><b>{closedTrades}</b> kapandı</td>
+            <td>
+              {hitRate != null ? (
+                <span className={hitRate >= 0.45 ? "text-green" : "text-red"}>
+                  {(hitRate * 100).toFixed(1)}%
+                </span>
+              ) : <span className="text-muted">—</span>}
+            </td>
+            <td>
+              {avgReturn != null ? (
+                <span className={avgReturn >= 0 ? "text-green" : "text-red"}>
+                  {avgReturn >= 0 ? "+" : ""}{(avgReturn * 100).toFixed(2)}%
+                </span>
+              ) : <span className="text-muted">—</span>}
+            </td>
+            <td><b>{openTrades}</b></td>
+          </tr>
+        </tbody>
+      </table>
+
+      {paper?.trades && paper.trades.length > 0 && (
+        <div className="box" style={{ marginBottom: "12px" }}>
+          <div className="box-head">📈 Son Paper Trade Sinyalleri</div>
+          <div className="box-body" style={{ padding: 0 }}>
+            <table className="data-table" style={{ marginBottom: 0 }}>
+              <thead>
+                <tr>
+                  <th>Hafta</th>
+                  <th>Hisse</th>
+                  <th>P(≥%2)</th>
+                  <th>Beklenen Getiri</th>
+                  <th>Gerçekleşen</th>
+                  <th>Durum</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paper.trades.slice(0, 8).map((t: any, i: number) => (
+                  <tr key={i} className={t.hit_2pct ? "highlight" : ""}>
+                    <td style={{ fontFamily: "monospace", fontSize: "10px" }}>{t.week_starting}</td>
+                    <td>
+                      <a href={`/stocks/${t.ticker}`}><b>{t.ticker}</b></a>
+                      {t.confidence === "high" && <> <span className="badge badge-success">YÜKSEK</span></>}
+                    </td>
+                    <td className={t.prob_2pct >= 0.6 ? "text-green" : ""}>
+                      {t.prob_2pct != null ? `${(t.prob_2pct * 100).toFixed(1)}%` : "—"}
+                    </td>
+                    <td>
+                      {t.expected_return != null
+                        ? <span className={t.expected_return >= 0 ? "text-green" : "text-red"}>
+                            {t.expected_return >= 0 ? "+" : ""}{(t.expected_return * 100).toFixed(1)}%
+                          </span>
+                        : "—"}
+                    </td>
+                    <td>
+                      {t.realized_return != null
+                        ? <span className={t.realized_return >= 0 ? "text-green" : "text-red"}>
+                            {t.realized_return >= 0 ? "+" : ""}{(t.realized_return * 100).toFixed(2)}%
+                          </span>
+                        : "—"}
+                    </td>
+                    <td>
+                      <span className={`badge ${t.status === "closed" ? "badge-info" : t.status === "open" ? "badge-warning" : "badge-info"}`}>
+                        {t.status === "closed" ? "KAPANDI" : t.status === "open" ? "AÇIK" : t.status?.toUpperCase()}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="box">
+        <div className="box-head">📦 Hisse Evreni ({stocks.length} hisse)</div>
+        <div className="box-body" style={{ padding: 0 }}>
+          <table className="data-table" style={{ marginBottom: 0 }}>
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Şirket Adı</th>
+                <th>Sektör</th>
+                <th>Detay</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stocks.map((s: any) => (
+                <tr key={s.ticker}>
+                  <td><b><a href={`/stocks/${s.ticker}`}>{s.ticker}</a></b></td>
+                  <td>{s.name}</td>
+                  <td style={{ color: "#336699" }}>{s.sector}</td>
+                  <td><a href={`/stocks/${s.ticker}/research`}>araştır &raquo;</a></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style={{
+        textAlign: "center", padding: "6px", background: "#e8f0f8",
+        border: "1px solid #c0c0c0", fontSize: "10px",
+        fontFamily: "Tahoma,sans-serif", color: "#666", marginTop: "8px"
+      }}>
+        Borsa Research Engine v1.0 &nbsp;|&nbsp;
+        Bu sistem yalnızca araştırma amaçlıdır, yatırım tavsiyesi değildir &nbsp;|&nbsp;
+        <a href="/admin">Yönetim Paneli</a>
+      </div>
     </div>
   );
 }

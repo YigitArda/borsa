@@ -1,102 +1,103 @@
 import { api } from "@/lib/api";
 
-interface StockReport {
-  ticker: string;
-  name: string;
-  weekly_price_rows: number;
-  daily_price_rows: number;
-  feature_rows: number;
-  latest_week: string | null;
-  status: string;
-}
-
-interface DQReport {
-  stocks: StockReport[];
-  macro_freshness: Record<string, string>;
-  total_stocks: number;
-  stocks_with_data: number;
-}
-
-async function getDQReport(): Promise<DQReport | null> {
-  try { return await api.get<DQReport>("/data-quality"); } catch { return null; }
-}
-
-export default async function DataQuality() {
-  const report = await getDQReport();
-
-  if (!report) {
-    return <div className="p-8 text-slate-400">Could not load data quality report. Is the API running?</div>;
-  }
+export default async function DataQualityPage() {
+  const report = await api.get<any>("/data-quality").catch(() => null);
+  if (!report) return (
+    <div className="alert alert-danger">
+      ❌ Veri kalitesi raporu alınamadı. API çalışıyor mu?
+    </div>
+  );
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Data Quality</h1>
-        <p className="text-slate-400 text-sm mt-1">Coverage and freshness of all data sources.</p>
-      </div>
+    <div>
+      <h1>📋 Veri Kalitesi Raporu</h1>
 
-      {/* Summary */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-          <div className="text-xs text-slate-400">Total Stocks</div>
-          <div className="text-2xl font-bold text-white mt-1">{report.total_stocks}</div>
-        </div>
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-          <div className="text-xs text-slate-400">Stocks with Data</div>
-          <div className="text-2xl font-bold text-green-400 mt-1">{report.stocks_with_data}</div>
-        </div>
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-          <div className="text-xs text-slate-400">Missing Data</div>
-          <div className="text-2xl font-bold text-red-400 mt-1">{report.total_stocks - report.stocks_with_data}</div>
-        </div>
-      </div>
+      <table className="data-table" style={{ width: "400px", marginBottom: "12px" }}>
+        <thead>
+          <tr><th>Metrik</th><th>Değer</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Toplam Hisse</td><td><b>{report.total_stocks}</b></td></tr>
+          <tr>
+            <td>Verisi Olan Hisse</td>
+            <td>
+              <span className={report.stocks_with_data === report.total_stocks ? "text-green" : "text-red"}>
+                <b>{report.stocks_with_data}</b>
+              </span>
+            </td>
+          </tr>
+          <tr>
+            <td>Eksik Veri</td>
+            <td>
+              <span className={(report.total_stocks - report.stocks_with_data) === 0 ? "text-green" : "text-red"}>
+                <b>{report.total_stocks - report.stocks_with_data}</b>
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
 
-      {/* Macro Freshness */}
-      <div className="rounded-lg border border-slate-700 bg-slate-800 p-5">
-        <h2 className="text-lg font-semibold text-white mb-3">Macro Data Freshness</h2>
-        <div className="grid grid-cols-3 gap-3">
-          {Object.entries(report.macro_freshness).map(([code, latest]) => (
-            <div key={code} className="bg-slate-700 rounded p-3">
-              <div className="text-xs text-slate-400">{code}</div>
-              <div className="text-sm text-white font-mono">{latest}</div>
-            </div>
-          ))}
+      {report.macro_freshness && Object.keys(report.macro_freshness).length > 0 && (
+        <div className="box" style={{ marginBottom: "12px" }}>
+          <div className="box-head">📡 Makro Veri Tazeliği</div>
+          <div className="box-body" style={{ padding: 0 }}>
+            <table className="data-table" style={{ marginBottom: 0 }}>
+              <thead>
+                <tr><th>Gösterge</th><th>Son Güncelleme</th></tr>
+              </thead>
+              <tbody>
+                {Object.entries(report.macro_freshness).map(([code, date]: any) => (
+                  <tr key={code}>
+                    <td><b>{code}</b></td>
+                    <td style={{ fontFamily: "monospace", fontSize: "10px" }}>{date}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-        {Object.keys(report.macro_freshness).length === 0 && (
-          <p className="text-slate-500 text-sm">No macro data ingested yet. Run the pipeline first.</p>
-        )}
-      </div>
+      )}
 
-      {/* Stock Table */}
-      <div className="rounded-lg border border-slate-700 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-800 text-slate-400">
-            <tr>
-              <th className="px-4 py-3 text-left">Ticker</th>
-              <th className="px-4 py-3 text-right">Daily Rows</th>
-              <th className="px-4 py-3 text-right">Weekly Rows</th>
-              <th className="px-4 py-3 text-right">Feature Rows</th>
-              <th className="px-4 py-3 text-center">Latest Week</th>
-              <th className="px-4 py-3 text-center">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {report.stocks.map((s) => (
-              <tr key={s.ticker} className="border-t border-slate-700 hover:bg-slate-800/50">
-                <td className="px-4 py-2 font-bold text-blue-400">{s.ticker}</td>
-                <td className="px-4 py-2 text-right text-slate-300 font-mono">{s.daily_price_rows.toLocaleString()}</td>
-                <td className="px-4 py-2 text-right text-slate-300 font-mono">{s.weekly_price_rows.toLocaleString()}</td>
-                <td className="px-4 py-2 text-right text-slate-300 font-mono">{s.feature_rows.toLocaleString()}</td>
-                <td className="px-4 py-2 text-center text-slate-400 font-mono">{s.latest_week ?? "—"}</td>
-                <td className="px-4 py-2 text-center">
-                  <span className={`text-xs px-2 py-0.5 rounded ${s.status === "ok" ? "text-green-400 bg-green-400/10" : "text-red-400 bg-red-400/10"}`}>
-                    {s.status}
-                  </span>
-                </td>
+      <div className="box">
+        <div className="box-head">📦 Hisse Bazlı Veri Durumu</div>
+        <div className="box-body" style={{ padding: 0 }}>
+          <table className="data-table" style={{ marginBottom: 0 }}>
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Günlük Fiyat</th>
+                <th>Haftalık Fiyat</th>
+                <th>Feature Satır</th>
+                <th>Son Hafta</th>
+                <th>Durum</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {report.stocks?.map((s: any) => (
+                <tr key={s.ticker}>
+                  <td><b><a href={`/stocks/${s.ticker}`}>{s.ticker}</a></b></td>
+                  <td style={{ fontFamily: "monospace" }}>{s.daily_price_rows?.toLocaleString()}</td>
+                  <td style={{ fontFamily: "monospace" }}>{s.weekly_price_rows?.toLocaleString()}</td>
+                  <td style={{ fontFamily: "monospace" }}>{s.feature_rows?.toLocaleString()}</td>
+                  <td style={{ fontFamily: "monospace", fontSize: "10px" }}>{s.latest_week ?? "—"}</td>
+                  <td>
+                    <span className={`badge ${s.status === "ok" ? "badge-success" : "badge-danger"}`}>
+                      {s.status === "ok" ? "TAMAM" : "EKSİK"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style={{
+        textAlign: "center", padding: "6px", background: "#e8f0f8",
+        border: "1px solid #c0c0c0", fontSize: "10px",
+        fontFamily: "Tahoma,sans-serif", color: "#666", marginTop: "8px"
+      }}>
+        Bu sistem yalnızca araştırma amaçlıdır, yatırım tavsiyesi değildir
       </div>
     </div>
   );

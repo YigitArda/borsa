@@ -1,36 +1,154 @@
-import type { Metadata } from "next";
 import "./globals.css";
 import Link from "next/link";
+import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Borsa Research Engine",
-  description: "Self-improving stock strategy research — not financial advice",
+  title: "Borsa Research Engine v1.0",
+  description: "Quant araştırma sistemi — yatırım tavsiyesi değildir",
 };
 
 const navLinks = [
-  { href: "/", label: "Dashboard" },
-  { href: "/weekly-picks", label: "Weekly Picks" },
-  { href: "/strategy-lab", label: "Strategy Lab" },
-  { href: "/model-comparison", label: "Model Comparison" },
-  { href: "/feature-importance", label: "Feature Importance" },
-  { href: "/risk-warnings", label: "Risk Warnings" },
-  { href: "/data-quality", label: "Data Quality" },
+  { href: "/", label: "Ana Sayfa" },
+  { href: "/weekly-picks", label: "Haftalık Sinyaller" },
+  { href: "/strategy-lab", label: "Strateji Lab" },
+  { href: "/model-comparison", label: "Model Karşılaştırma" },
+  { href: "/feature-importance", label: "Feature Önemi" },
+  { href: "/risk-warnings", label: "Risk Uyarıları" },
+  { href: "/data-quality", label: "Veri Kalitesi" },
+  { href: "/backtest", label: "Backtest" },
 ];
+
+const sidebarSections = [
+  {
+    title: "📋 Ana Menü",
+    links: [
+      { href: "/", label: "🏠 Ana Sayfa" },
+      { href: "/weekly-picks", label: "📈 Haftalık Sinyaller" },
+      { href: "/strategy-lab", label: "🔬 Strateji Lab" },
+      { href: "/model-comparison", label: "📊 Model Karşılaştırma" },
+    ],
+  },
+  {
+    title: "🔍 Araştırma",
+    links: [
+      { href: "/feature-importance", label: "⭐ Feature Önemi" },
+      { href: "/risk-warnings", label: "⚠️ Risk Uyarıları" },
+      { href: "/data-quality", label: "📋 Veri Kalitesi" },
+      { href: "/backtest", label: "🗂️ Backtest" },
+    ],
+  },
+  {
+    title: "⚙️ Sistem",
+    links: [
+      { href: "/admin", label: "👤 Admin Panel" },
+      { href: "/admin/jobs", label: "💼 İşler" },
+      { href: "/admin/notifications", label: "🔔 Bildirimler" },
+      { href: "/stocks", label: "📦 Hisseler" },
+    ],
+  },
+];
+
+const TICKER_SYMBOLS = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "JPM", "V", "UNH"];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen">
-        <nav className="border-b border-slate-700 bg-slate-900 px-6 py-3 flex items-center gap-8">
-          <span className="text-lg font-bold text-blue-400">Borsa</span>
-          {navLinks.map((l) => (
-            <Link key={l.href} href={l.href} className="text-sm text-slate-300 hover:text-white transition-colors">
+    <html lang="tr">
+      <body style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+
+        {/* Ticker scroll */}
+        <div className="ticker-bar">
+          {TICKER_SYMBOLS.map(s => `${s} --% `).join(" | ")}
+          &nbsp;&nbsp;VIX: -- &nbsp;|&nbsp; S&amp;P500: -- &nbsp;|&nbsp; Son güncelleme: --
+        </div>
+
+        {/* Topbar */}
+        <div style={{
+          background: "linear-gradient(to bottom, #6699cc, #336699)",
+          padding: "6px 12px", display: "flex", alignItems: "center", gap: "12px"
+        }}>
+          <span style={{ color: "#fff", fontWeight: "bold", fontSize: "14px", fontFamily: "Tahoma, sans-serif" }}>
+            📊 Borsa Research Engine
+          </span>
+          <span style={{ color: "#c8d8e8", fontSize: "10px", fontFamily: "Tahoma,sans-serif" }}>
+            v1.0 — Araştırma Sistemi
+          </span>
+          <span style={{ marginLeft: "auto", color: "#ffffc0", fontSize: "10px", fontFamily: "Tahoma,sans-serif", fontStyle: "italic" }}>
+            ⚠ Yatırım tavsiyesi değildir
+          </span>
+        </div>
+
+        {/* Menubar */}
+        <div style={{
+          background: "#d4d0c8", borderBottom: "1px solid #808080",
+          padding: "2px 6px", display: "flex", gap: "0"
+        }}>
+          {navLinks.map(l => (
+            <Link key={l.href} href={l.href} style={{
+              padding: "2px 10px", fontSize: "11px",
+              fontFamily: "Tahoma,sans-serif", color: "#000",
+              textDecoration: "none", display: "block"
+            }}>
               {l.label}
             </Link>
           ))}
-          <span className="ml-auto text-xs text-slate-500 italic">Not financial advice</span>
-        </nav>
-        <main className="p-6">{children}</main>
+        </div>
+
+        {/* Ana içerik — sidebar + sayfa */}
+        <div style={{ display: "flex", flex: 1, background: "#fff" }}>
+
+          {/* Sidebar */}
+          <div style={{
+            width: "165px", background: "#d4d0c8",
+            borderRight: "1px solid #808080", flexShrink: 0
+          }}>
+            {sidebarSections.map(section => (
+              <div key={section.title} style={{ borderBottom: "1px solid #808080" }}>
+                <div style={{
+                  background: "linear-gradient(to bottom, #6699cc, #336699)",
+                  padding: "3px 8px", fontSize: "10px",
+                  fontFamily: "Tahoma,sans-serif", fontWeight: "bold", color: "#fff"
+                }}>
+                  {section.title}
+                </div>
+                {section.links.map(link => (
+                  <Link key={link.href} href={link.href} style={{
+                    display: "block", padding: "3px 10px", fontSize: "11px",
+                    fontFamily: "Tahoma,sans-serif", color: "#00008b",
+                    textDecoration: "underline"
+                  }}>
+                    {link.label}
+                  </Link>
+                ))}
+              </div>
+            ))}
+
+            {/* Sistem durum kutusu */}
+            <div style={{
+              margin: "6px", padding: "6px", background: "#ffffc0",
+              border: "1px solid #cc9900", fontSize: "10px",
+              fontFamily: "Tahoma,sans-serif"
+            }}>
+              <b>⚙ Sistem Durumu</b><br />
+              Pipeline: <span className="text-green">HAZIR</span><br />
+              Kill Switch: <span className="text-green">KAPALI</span>
+            </div>
+          </div>
+
+          {/* Sayfa içeriği */}
+          <div style={{ flex: 1, padding: "10px", background: "#fff", overflow: "auto" }}>
+            {children}
+          </div>
+
+        </div>
+
+        {/* Status bar */}
+        <div className="status-bar">
+          <span className="status-segment">✅ Hazır</span>
+          <span className="status-segment">🌐 localhost:3000</span>
+          <span className="status-segment">📊 20 hisse izleniyor</span>
+          <span>🔒 Lokal sunucu</span>
+        </div>
+
       </body>
     </html>
   );
