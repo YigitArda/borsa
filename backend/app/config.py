@@ -5,8 +5,9 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     model_config = ConfigDict(env_file=".env")
 
-    database_url: str = "postgresql+asyncpg://borsa:borsa123@localhost:5432/borsa"
-    sync_database_url: str = "postgresql://borsa:borsa123@localhost:5432/borsa"
+    # Override these in .env. Defaults intentionally avoid embedding secrets.
+    database_url: str = "postgresql+asyncpg://borsa@localhost:5432/borsa"
+    sync_database_url: str = "postgresql://borsa@localhost:5432/borsa"
     redis_url: str = "redis://localhost:6379/0"
     environment: str = "development"
 

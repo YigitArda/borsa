@@ -59,13 +59,15 @@ def run_research_loop(
     base_strategy_id: int | None = None,
     mode: str = "sequential",
     n_generations: int | None = None,
+    tickers: list[str] | None = None,
+    base_config: dict | None = None,
 ):
     from app.services.research_loop import ResearchLoop
     session = _get_sync_session()
     try:
         if _check_kill_switch(session):
             return {"status": "blocked", "reason": "kill_switch_active"}
-        loop = ResearchLoop(session, settings.mvp_tickers)
+        loop = ResearchLoop(session, tickers or settings.mvp_tickers, base_config=base_config)
         results = loop.run_loop(
             n_iterations=n_iterations,
             base_strategy_id=base_strategy_id,

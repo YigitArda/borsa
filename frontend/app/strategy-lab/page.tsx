@@ -151,7 +151,16 @@ export default function StrategyLab() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model_type: modelType, target, threshold, top_n: topN, holding_weeks: holdingWeeks, features: [] }),
+          body: JSON.stringify({
+            model_type: modelType,
+            target,
+            threshold,
+            top_n: topN,
+            holding_weeks: holdingWeeks,
+            features: selectedFeatures,
+            tickers: selectedTickers,
+            apply_liquidity_filter: applyLiquidityFilter,
+          }),
         }
       );
       const d = await res.json();
@@ -421,7 +430,7 @@ export default function StrategyLab() {
             </tbody>
           </table>
           <div style={{ display: "flex", gap: "6px" }}>
-            <button onClick={startResearch} disabled={running || selectedTickers.length === 0}>
+            <button onClick={startResearch} disabled={running || selectedTickers.length === 0 || selectedFeatures.length === 0}>
               {running ? "⏳ Çalışıyor..." : "▶ Araştırma Döngüsünü Başlat"}
             </button>
             <button onClick={loadPromotedStrategies}>

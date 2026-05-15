@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface NotificationSettings {
   emailAlerts: boolean;
@@ -11,16 +11,44 @@ interface NotificationSettings {
   dailyDigest: boolean;
 }
 
+const STORAGE_KEY = "borsa.notification-settings.v1";
+
+const DEFAULT_SETTINGS: NotificationSettings = {
+  emailAlerts: true,
+  slackWebhook: "",
+  jobFailures: true,
+  killSwitchTriggers: true,
+  strategyPromotions: false,
+  dailyDigest: false,
+};
+
 export default function NotificationsPage() {
-  const [settings, setSettings] = useState<NotificationSettings>({
-    emailAlerts: true,
-    slackWebhook: "",
-    jobFailures: true,
-    killSwitchTriggers: true,
-    strategyPromotions: false,
-    dailyDigest: false,
-  });
+  const [settings, setSettings] = useState<NotificationSettings>(DEFAULT_SETTINGS);
   const [saved, setSaved] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+  const saveTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<NotificationSettings>;
+        setSettings((prev) => ({ ...prev, ...parsed }));
+      }
+    } catch {
+      // Ignore malformed storage and fall back to defaults.
+    } finally {
+      setHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) {
+        window.clearTimeout(saveTimer.current);
+      }
+    };
+  }, []);
 
   function update<K extends keyof NotificationSettings>(key: K, value: NotificationSettings[K]) {
     setSettings((prev) => ({ ...prev, [key]: value }));
@@ -28,16 +56,23 @@ export default function NotificationsPage() {
   }
 
   function handleSave() {
-    // TODO: Persist to backend when API is ready
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      setSaved(true);
+      if (saveTimer.current) {
+        window.clearTimeout(saveTimer.current);
+      }
+      saveTimer.current = window.setTimeout(() => setSaved(false), 3000);
+    } catch {
+      setSaved(false);
+    }
   }
 
   return (
     <div className="max-w-3xl mx-auto space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-white mb-1">Notification Settings</h1>
-        <p className="text-slate-400 text-sm">Configure alerts and integrations.</p>
+        <p className="text-slate-400 text-sm">Configure alerts and integrations. Saved in this browser.</p>
       </div>
 
       <div className="rounded-lg border border-slate-700 bg-slate-800 p-6 space-y-6">
@@ -69,6 +104,7 @@ export default function NotificationsPage() {
             className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm placeholder-slate-500"
           />
           <p className="text-xs text-slate-400">Optional. Send alerts to a Slack channel.</p>
+          <p className="text-xs text-slate-500">Stored locally in this browser.</p>
         </div>
 
         <div className="border-t border-slate-700 pt-6 space-y-4">
@@ -103,11 +139,12 @@ export default function NotificationsPage() {
         <div className="flex items-center gap-4 pt-2">
           <button
             onClick={handleSave}
-            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm font-medium"
+            disabled={!hydrated}
+            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
           >
             Save Settings
           </button>
-          {saved && <span className="text-sm text-green-400">Settings saved!</span>}
+          {saved && <span className="text-sm text-green-400">Settings saved locally.</span>}
         </div>
       </div>
     </div>

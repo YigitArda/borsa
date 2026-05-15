@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +9,17 @@ from app.services.model_registry import ModelRegistry
 from app.tasks.celery_app import enqueue_task
 
 router = APIRouter(prefix="/strategies", tags=["strategies"])
+
+
+class ResearchStartRequest(BaseModel):
+    model_type: str = "lightgbm"
+    target: str = "target_2pct_1w"
+    threshold: float = 0.5
+    top_n: int = 5
+    holding_weeks: int = 1
+    features: list[str] = Field(default_factory=list)
+    tickers: list[str] = Field(default_factory=list)
+    apply_liquidity_filter: bool = True
 
 
 @router.get("")
@@ -32,11 +44,23 @@ async def list_strategies(status: str | None = None, db: AsyncSession = Depends(
 
 @router.post("/research/start")
 async def start_research(
+    req: ResearchStartRequest | None = Body(default=None),
     n_iterations: int = 5,
     base_strategy_id: int | None = None,
     mode: str = "sequential",
     n_generations: int | None = None,
 ):
+    req = req or ResearchStartRequest()
+    base_config = {
+        "model_type": req.model_type,
+        "target": req.target,
+        "threshold": req.threshold,
+        "top_n": req.top_n,
+        "holding_weeks": req.holding_weeks,
+        "features": req.features,
+        "apply_liquidity_filter": req.apply_liquidity_filter,
+    }
+
     from app.tasks.pipeline_tasks import run_research_loop
     task = enqueue_task(
         run_research_loop,
@@ -44,6 +68,8 @@ async def start_research(
         base_strategy_id=base_strategy_id,
         mode=mode,
         n_generations=n_generations,
+        tickers=req.tickers or None,
+        base_config=base_config,
     )
     return {
         "task_id": task.id,
@@ -51,6 +77,8 @@ async def start_research(
         "n_iterations": n_iterations,
         "mode": mode,
         "n_generations": n_generations,
+        "features": len(req.features),
+        "tickers": len(req.tickers),
     }
 
 

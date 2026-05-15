@@ -50,6 +50,18 @@ BASE_STRATEGY = {
     "take_profit": 0.08,
 }
 
+
+def _merge_base_config(base_config: dict | None) -> dict:
+    merged = copy.deepcopy(BASE_STRATEGY)
+    if not base_config:
+        return merged
+
+    for key, value in base_config.items():
+        if key == "tickers" or value is None:
+            continue
+        merged[key] = copy.deepcopy(value)
+    return merged
+
 ACCEPTANCE_GATE = {
     "min_sharpe": 0.5,
     "min_win_rate": 0.45,
@@ -228,9 +240,10 @@ class RuleBasedResearch:
 
 
 class ResearchLoop:
-    def __init__(self, session: Session, tickers: list[str]):
+    def __init__(self, session: Session, tickers: list[str], base_config: dict | None = None):
         self.session = session
         self.tickers = tickers
+        self.base_config = _merge_base_config(base_config)
         self.mutation_tracker = MutationScoreTracker(session)
         self.rl_agent = RLStrategyAgent(session)
         self.proposer = StrategyProposer(self.mutation_tracker, self.rl_agent)
@@ -358,10 +371,10 @@ class ResearchLoop:
 
         if base_strategy_id:
             base = self.session.get(Strategy, base_strategy_id)
-            base_config = base.config if base else BASE_STRATEGY
+            base_config = copy.deepcopy(base.config) if base and base.config else copy.deepcopy(self.base_config)
             generation = (base.generation + 1) if base else 1
         else:
-            base_config = BASE_STRATEGY
+            base_config = copy.deepcopy(self.base_config)
             generation = 0
 
         base_metrics = self._fold_metrics_for_strategy(base_strategy_id)
@@ -385,6 +398,7 @@ class ResearchLoop:
             self.tickers,
             min_train_years=5,
             holdout_cutoff=self._holdout_cutoff,
+            apply_liquidity_filter=new_config.get("apply_liquidity_filter", True),
         )
 
         if not folds:
@@ -481,7 +495,12 @@ class ResearchLoop:
     def evaluate_config(self, config: dict, parent_strategy_id: int | None = None, generation: int = 0) -> tuple[list[dict], int | None]:
         """Evaluate and persist one concrete config for genetic/population search."""
         trainer = ModelTrainer(self.session, config)
-        folds = trainer.walk_forward(self.tickers, min_train_years=5, holdout_cutoff=self._holdout_cutoff)
+        folds = trainer.walk_forward(
+            self.tickers,
+            min_train_years=5,
+            holdout_cutoff=self._holdout_cutoff,
+            apply_liquidity_filter=config.get("apply_liquidity_filter", True),
+        )
         if not folds:
             return [], None
 
@@ -515,7 +534,7 @@ class ResearchLoop:
 
     def run_genetic(self, n_generations: int = 5, base_strategy_id: int | None = None) -> dict:
         base = self.session.get(Strategy, base_strategy_id) if base_strategy_id else None
-        base_config = base.config if base else BASE_STRATEGY
+        base_config = copy.deepcopy(base.config) if base and base.config else copy.deepcopy(self.base_config)
         from app.services.genetic_evolver import GeneticEvolver
 
         evolver = GeneticEvolver(
@@ -537,7 +556,7 @@ class ResearchLoop:
 
     def run_population(self, n_generations: int = 5, base_strategy_id: int | None = None, use_celery: bool = True) -> dict:
         base = self.session.get(Strategy, base_strategy_id) if base_strategy_id else None
-        base_config = base.config if base else BASE_STRATEGY
+        base_config = copy.deepcopy(base.config) if base and base.config else copy.deepcopy(self.base_config)
         from app.services.population_manager import PopulationManager
 
         manager = PopulationManager(

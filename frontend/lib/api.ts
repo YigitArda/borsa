@@ -16,6 +16,17 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
   return res.json();
 }
 
+type ResearchStartRequest = {
+  model_type?: string;
+  target?: string;
+  threshold?: number;
+  top_n?: number;
+  holding_weeks?: number;
+  features?: string[];
+  tickers?: string[];
+  apply_liquidity_filter?: boolean;
+};
+
 // Pipeline endpoints
 export const pipeline = {
   runAll: (tickers?: string[]) => post<{ task_id: string; status: string }>("/pipeline/run-all", tickers ? { tickers } : undefined),
@@ -27,8 +38,11 @@ export const pipeline = {
 // Strategy endpoints
 export const strategies = {
   list: () => get<any[]>("/strategies"),
-  startResearch: (n_iterations: number = 150) => 
-    post<{ task_id: string; status: string; n_iterations: number }>(`/strategies/research/start?n_iterations=${n_iterations}`),
+  startResearch: (n_iterations: number = 150, config: ResearchStartRequest = {}) =>
+    post<{ task_id: string; status: string; n_iterations: number; features: number; tickers: number }>(
+      `/strategies/research/start?n_iterations=${n_iterations}`,
+      config,
+    ),
   get: (id: number) => get<any>(`/strategies/${id}`),
   promote: (id: number) => post<any>(`/strategies/${id}/promote`),
 };
