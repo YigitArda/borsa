@@ -467,6 +467,25 @@ class ModelTrainer:
             "_trade_details": trade_details,
             "_equity_curve": equity_curve,
         }
+
+        # SHAP değerleri hesapla
+        try:
+            import shap
+            feature_cols = [c for c in self.features if c in test_df.columns]
+            X_sample = test_df[feature_cols].fillna(0).values[:100]
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer.shap_values(X_sample)
+            if isinstance(shap_values, list):
+                shap_values = shap_values[1]
+            mean_abs = abs(shap_values).mean(axis=0)
+            total = mean_abs.sum() or 1
+            metrics["shap_importance"] = {
+                f: round(float(v / total), 4)
+                for f, v in zip(feature_cols, mean_abs)
+            }
+        except Exception as e:
+            logger.warning("SHAP hesaplanamadı: %s", e)
+
         return metrics
 
     def _load_prices_for_tickers(self, tickers: list[str]) -> pd.DataFrame:

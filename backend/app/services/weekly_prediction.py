@@ -64,7 +64,30 @@ def _train_return_model(train_df: pd.DataFrame, feature_cols: list[str]):
 
 
 def _build_signal_summary(feature_cols: list[str], feature_values: np.ndarray, model) -> str:
-    """Build a short text summary of the top features driving the prediction."""
+    """Build a short text summary of the top features driving the prediction.
+
+    Prefers SHAP values for tree models; falls back to coefficient/importance based summary.
+    """
+    # SHAP — tree modeller için (LightGBM, XGBoost, RandomForest)
+    try:
+        import shap
+        explainer = shap.TreeExplainer(model)
+        shap_vals = explainer.shap_values(feature_values.reshape(1, -1))
+        if isinstance(shap_vals, list):
+            shap_vals = shap_vals[1]
+        shap_vals = shap_vals[0]
+        top_idx = abs(shap_vals).argsort()[::-1][:3]
+        parts = []
+        for idx in top_idx:
+            fname = feature_cols[idx]
+            fval = round(float(feature_values[idx]), 2)
+            direction = "+" if shap_vals[idx] > 0 else "-"
+            parts.append(f"{direction}{fname}={fval}")
+        return ", ".join(parts)
+    except Exception:
+        pass
+
+    # Fallback — lineer modeller için katsayı bazlı
     try:
         if hasattr(model, "coef_"):
             coef = model.coef_[0] if model.coef_.ndim > 1 else model.coef_
@@ -87,6 +110,7 @@ def _build_signal_summary(feature_cols: list[str], feature_values: np.ndarray, m
             return ", ".join(parts)
     except Exception:
         pass
+
     return ""
 
 
