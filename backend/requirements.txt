@@ -36,5 +36,13 @@ python-dotenv==1.0.1
 structlog==24.4.0
 slowapi==0.1.9
 
+# Auth
+pyjwt==2.9.0
+bcrypt==4.2.0
+
+# Notifications
+aiosmtplib==3.0.2
+
 # Tests
 pytest==8.3.3
+pytest-asyncio==0.24.0

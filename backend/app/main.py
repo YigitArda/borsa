@@ -14,13 +14,26 @@ from app.api.weekly_picks import router as picks_router
 from app.api.pipeline import router as pipeline_router
 from app.api.research import router as research_router
 from app.api.data_quality import router as dq_router
+from app.api.verification import router as verification_router
+from app.api.auth import router as auth_router
+from app.api.jobs import router as jobs_router
+from app.api.selected_stocks import router as selected_stocks_router
+from app.api.export import router as export_router
 from app.config import settings
+from app.middleware.logging import LoggingMiddleware
+from app.logging_config import configure_logging
+from app.websocket import websocket_endpoint
 
 limiter = Limiter(key_func=get_remote_address)
+
+# Configure structured logging on startup
+configure_logging(log_level="INFO", json=True)
 
 app = FastAPI(title="Borsa Research Engine", version="1.0.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+app.add_middleware(LoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,6 +53,65 @@ _CACHED_ROUTES = {
     "/data-quality",
 }
 
+# Per-endpoint rate limits (requests per minute)
+_RATE_LIMITS = {
+    # Heavy endpoints
+    "/backtest/run": 5,
+    "/backtest/direct": 5,
+    "/backtest/cpcv": 5,
+    "/backtest/portfolio": 5,
+    "/strategies/research/start": 5,
+    "/research/ablation": 5,
+    # Write endpoints
+    "/pipeline/": 30,
+    "/strategies/": 30,
+    "/weekly-picks/generate": 30,
+    "/weekly-picks/paper/": 30,
+    "/auth/": 30,
+    # Export endpoints
+    "/export/": 10,
+    # Read endpoints (default)
+    "__default__": 100,
+}
+
+# Simple in-memory rate limit store: {client_ip: {endpoint: [timestamps]}}
+_rate_limit_store: dict = {}
+
+
+def _check_rate_limit(client_ip: str, path: str) -> tuple[bool, int, int]:
+    """Check if request is within rate limit. Returns (allowed, limit, remaining)."""
+    import time
+    now = time.time()
+    window = 60  # 1 minute
+
+    # Find applicable limit
+    limit = _RATE_LIMITS.get("__default__")
+    for prefix, l in _RATE_LIMITS.items():
+        if prefix != "__default__" and path.startswith(prefix):
+            limit = l
+            break
+
+    # Clean old entries
+    if client_ip not in _rate_limit_store:
+        _rate_limit_store[client_ip] = {}
+    if path not in _rate_limit_store[client_ip]:
+        _rate_limit_store[client_ip][path] = []
+
+    # Remove timestamps older than window
+    _rate_limit_store[client_ip][path] = [
+        ts for ts in _rate_limit_store[client_ip][path] if now - ts < window
+    ]
+
+    requests_in_window = len(_rate_limit_store[client_ip][path])
+    remaining = max(0, limit - requests_in_window - 1)
+
+    if requests_in_window >= limit:
+        return False, limit, 0
+
+    _rate_limit_store[client_ip][path].append(now)
+    return True, limit, remaining
+
+
 _redis_client = None
 
 def _get_redis():
@@ -52,6 +124,32 @@ def _get_redis():
         except Exception:
             _redis_client = None
     return _redis_client
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Apply per-endpoint rate limiting."""
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    client_ip = request.client.host if request.client else "unknown"
+    path = request.url.path
+
+    allowed, limit, remaining = _check_rate_limit(client_ip, path)
+    if not allowed:
+        response = JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={"detail": f"Rate limit exceeded: {limit} requests per minute for this endpoint"},
+        )
+        response.headers["X-RateLimit-Limit"] = str(limit)
+        response.headers["X-RateLimit-Remaining"] = "0"
+        response.headers["Retry-After"] = "60"
+        return response
+
+    response = await call_next(request)
+    response.headers["X-RateLimit-Limit"] = str(limit)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    return response
 
 
 @app.middleware("http")
@@ -117,6 +215,13 @@ app.include_router(picks_router)
 app.include_router(pipeline_router)
 app.include_router(research_router)
 app.include_router(dq_router)
+app.include_router(verification_router)
+app.include_router(auth_router)
+app.include_router(jobs_router)
+app.include_router(selected_stocks_router)
+app.include_router(export_router)
+
+app.add_api_websocket_route("/ws", websocket_endpoint)
 
 
 @app.get("/health")

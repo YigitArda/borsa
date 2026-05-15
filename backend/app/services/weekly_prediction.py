@@ -24,6 +24,8 @@ from app.models.strategy import Strategy
 from app.models.stock import Stock
 from app.models.prediction import WeeklyPrediction
 from app.services.model_training import ModelTrainer
+from app.services.calibration import CalibrationAnalyzer
+from app.services.kill_switch import KillSwitchMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +101,12 @@ class WeeklyPredictionService:
     ) -> int:
         tickers = tickers or settings.mvp_tickers
         requested_week_starting = week_starting
+
+        # Check kill switch before proceeding
+        monitor = KillSwitchMonitor(self.session)
+        if monitor.is_kill_switch_active():
+            logger.warning("Kill switch is active; blocking prediction generation")
+            return 0
 
         if strategy_id is not None:
             strategy = self.session.get(Strategy, strategy_id)
@@ -181,12 +189,17 @@ class WeeklyPredictionService:
         if return_model is not None:
             expected_returns = return_model.predict(return_scaler.transform(X_latest))
 
+        # Fetch latest calibration for confidence adjustment
+        analyzer = CalibrationAnalyzer(self.session)
+        latest_cal = analyzer.get_latest_calibration(strategy.id)
+
         rows = []
         for i, (_, row) in enumerate(latest_rows.iterrows()):
             prob = float(probs[i])
             prob_loss = float(risk_probs[i]) if risk_probs is not None else None
             exp_ret = float(expected_returns[i]) if expected_returns is not None else None
-            confidence = "high" if prob >= 0.65 else "medium" if prob >= 0.5 else "low"
+
+            confidence, calibrated_prob = analyzer.adjust_confidence(prob, latest_cal)
 
             fvals = X_latest[i]
             summary = _build_signal_summary(feature_cols, fvals, main_model)
@@ -195,7 +208,7 @@ class WeeklyPredictionService:
                 "stock_id": int(row["stock_id"]),
                 "strategy_id": strategy.id,
                 "week_starting": week_starting,
-                "prob_2pct": prob,
+                "prob_2pct": calibrated_prob,
                 "prob_loss_2pct": prob_loss,
                 "expected_return": exp_ret,
                 "confidence": confidence,

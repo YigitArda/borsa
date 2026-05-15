@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.backtest import BacktestRun, BacktestMetric
+from app.models.portfolio import PortfolioSimulation, PortfolioSnapshot
 
 router = APIRouter(prefix="/backtest", tags=["backtest"])
 
@@ -29,6 +30,30 @@ class DirectBacktestRequest(BaseModel):
     min_train_years: int = 5
     cpcv_groups: int = 6
     cpcv_test_groups: int = 2
+
+
+class PortfolioSimulationRequest(BaseModel):
+    strategy_id: int
+    backtest_run_id: int | None = None
+    initial_capital: float = 100000.0
+    max_positions: int = 5
+    max_position_weight: float = 0.25
+    sector_limit: float = 0.40
+    cash_ratio: float = 0.10
+    rebalance_frequency: str = "weekly"
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    transaction_cost_bps: float = 10.0
+    slippage_bps: float = 5.0
+    tickers: list[str] | None = None
+    model_type: str = "lightgbm"
+    features: list[str] | None = None
+    target: str = "target_2pct_1w"
+    threshold: float = 0.5
+    top_n: int = 5
+    holding_weeks: int = 1
+    min_train_years: int = 5
+    apply_liquidity_filter: bool = True
 
 
 @router.post("/run")
@@ -197,4 +222,230 @@ async def get_backtest(run_id: int, db: AsyncSession = Depends(get_db)):
         "test_start": str(run.test_start),
         "test_end": str(run.test_end),
         "metrics": {m.metric_name: m.value for m in metric_rows},
+    }
+
+
+# ------------------------------------------------------------------
+# Portfolio Simulation endpoints
+# ------------------------------------------------------------------
+
+@router.post("/portfolio")
+async def run_portfolio_simulation(
+    req: PortfolioSimulationRequest, db: AsyncSession = Depends(get_db)
+):
+    """Run a portfolio-level capital simulation from backtest trades."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.config import settings as cfg
+    from app.services.feature_engineering import TECHNICAL_FEATURES
+    from app.services.model_training import ModelTrainer
+    from app.services.backtester import Backtester
+    from app.services.portfolio_simulation import (
+        PortfolioSimulator,
+        SimulationConfig,
+    )
+
+    config = {
+        "model_type": req.model_type,
+        "features": req.features or TECHNICAL_FEATURES,
+        "target": req.target,
+        "threshold": req.threshold,
+        "top_n": req.top_n,
+        "embargo_weeks": 4,
+        "holding_weeks": req.holding_weeks,
+        "stop_loss": req.stop_loss,
+        "take_profit": req.take_profit,
+        "apply_liquidity_filter": req.apply_liquidity_filter,
+    }
+    tickers = req.tickers or cfg.mvp_tickers
+
+    engine = create_engine(cfg.sync_database_url)
+    SyncSession = sessionmaker(bind=engine)
+    session = SyncSession()
+
+    try:
+        trainer = ModelTrainer(session, config)
+        df = trainer.load_dataset(tickers)
+        if df.empty:
+            return {"status": "failed", "reason": "no data loaded"}
+
+        predictions = trainer.predict_all(df)
+        if predictions.empty:
+            return {"status": "failed", "reason": "no predictions produced"}
+
+        # Build price_df from dataset
+        price_df = df[["week_ending", "ticker", "open", "close", "high", "low"]].copy()
+        price_df = price_df.rename(columns={"week_ending": "date"})
+
+        backtester = Backtester(
+            predictions,
+            price_df,
+            threshold=req.threshold,
+            top_n=req.top_n,
+            holding_weeks=req.holding_weeks,
+            stop_loss=req.stop_loss,
+            take_profit=req.take_profit,
+        )
+        result = backtester.run()
+
+        # Convert Trade objects to dicts for portfolio simulator
+        trades = [
+            {
+                "ticker": t.ticker,
+                "stock_id": t.stock_id,
+                "entry_date": t.entry_date,
+                "exit_date": t.exit_date,
+                "entry_price": t.entry_price,
+                "exit_price": t.exit_price,
+                "return_pct": t.return_pct,
+                "signal_strength": t.signal_strength,
+            }
+            for t in result.trades
+        ]
+
+        sim_config = SimulationConfig(
+            initial_capital=req.initial_capital,
+            max_positions=req.max_positions,
+            max_position_weight=req.max_position_weight,
+            sector_limit=req.sector_limit,
+            cash_ratio=req.cash_ratio,
+            rebalance_frequency=req.rebalance_frequency,
+            stop_loss=req.stop_loss,
+            take_profit=req.take_profit,
+            transaction_cost_bps=req.transaction_cost_bps,
+            slippage_bps=req.slippage_bps,
+        )
+        simulator = PortfolioSimulator(sim_config)
+        sim_result = simulator.simulate(trades, price_df)
+
+        # Persist simulation and snapshots
+        sim = PortfolioSimulation(
+            strategy_id=req.strategy_id,
+            backtest_run_id=req.backtest_run_id,
+            initial_capital=req.initial_capital,
+            max_positions=req.max_positions,
+            max_position_weight=req.max_position_weight,
+            sector_limit=req.sector_limit,
+            cash_ratio=req.cash_ratio,
+            rebalance_frequency=req.rebalance_frequency,
+            stop_loss=req.stop_loss,
+            take_profit=req.take_profit,
+            transaction_cost_bps=req.transaction_cost_bps,
+            slippage_bps=req.slippage_bps,
+        )
+        session.add(sim)
+        session.flush()
+
+        for snap in sim_result.snapshots:
+            snapshot = PortfolioSnapshot(
+                simulation_id=sim.id,
+                date=snap["date"],
+                total_value=snap["total_value"],
+                cash_value=snap["cash_value"],
+                invested_value=snap["invested_value"],
+                n_positions=snap["n_positions"],
+                sector_exposure=snap["sector_exposure"],
+                monthly_return=snap.get("monthly_return"),
+                ytd_return=snap.get("ytd_return"),
+                drawdown=snap.get("drawdown"),
+            )
+            session.add(snapshot)
+
+        session.commit()
+
+        return {
+            "status": "ok",
+            "simulation_id": sim.id,
+            "equity_curve": [
+                {"date": str(d), "value": float(v)}
+                for d, v in sim_result.equity_curve.items()
+            ],
+            "drawdown_curve": [
+                {"date": str(d), "value": float(v)}
+                for d, v in sim_result.drawdown_curve.items()
+            ],
+            "monthly_returns": sim_result.monthly_returns,
+            "yearly_returns": sim_result.yearly_returns,
+            "worst_month": sim_result.worst_month,
+            "best_month": sim_result.best_month,
+            "consecutive_losses": sim_result.consecutive_losses,
+            "portfolio_volatility": sim_result.portfolio_volatility,
+            "trades_executed": len(result.trades),
+        }
+    finally:
+        session.close()
+
+
+@router.get("/portfolio/{simulation_id}")
+async def get_portfolio_simulation(
+    simulation_id: int, db: AsyncSession = Depends(get_db)
+):
+    """Get portfolio simulation summary."""
+    sim = await db.get(PortfolioSimulation, simulation_id)
+    if not sim:
+        return {"error": "not found"}
+
+    snapshots_result = await db.execute(
+        select(PortfolioSnapshot)
+        .where(PortfolioSnapshot.simulation_id == simulation_id)
+        .order_by(PortfolioSnapshot.date)
+    )
+    snaps = snapshots_result.scalars().all()
+
+    equity_curve = [
+        {"date": str(s.date), "value": s.total_value} for s in snaps
+    ]
+    drawdowns = [
+        {"date": str(s.date), "value": s.drawdown} for s in snaps if s.drawdown is not None
+    ]
+
+    return {
+        "id": sim.id,
+        "strategy_id": sim.strategy_id,
+        "backtest_run_id": sim.backtest_run_id,
+        "initial_capital": sim.initial_capital,
+        "max_positions": sim.max_positions,
+        "max_position_weight": sim.max_position_weight,
+        "sector_limit": sim.sector_limit,
+        "cash_ratio": sim.cash_ratio,
+        "rebalance_frequency": sim.rebalance_frequency,
+        "stop_loss": sim.stop_loss,
+        "take_profit": sim.take_profit,
+        "transaction_cost_bps": sim.transaction_cost_bps,
+        "slippage_bps": sim.slippage_bps,
+        "created_at": str(sim.created_at),
+        "equity_curve": equity_curve,
+        "drawdown_curve": drawdowns,
+        "final_value": equity_curve[-1]["value"] if equity_curve else sim.initial_capital,
+    }
+
+
+@router.get("/portfolio/{simulation_id}/snapshots")
+async def get_portfolio_snapshots(
+    simulation_id: int, db: AsyncSession = Depends(get_db)
+):
+    """Get all daily snapshots for a portfolio simulation."""
+    result = await db.execute(
+        select(PortfolioSnapshot)
+        .where(PortfolioSnapshot.simulation_id == simulation_id)
+        .order_by(PortfolioSnapshot.date)
+    )
+    rows = result.scalars().all()
+    return {
+        "simulation_id": simulation_id,
+        "count": len(rows),
+        "snapshots": [
+            {
+                "date": str(r.date),
+                "total_value": r.total_value,
+                "cash_value": r.cash_value,
+                "invested_value": r.invested_value,
+                "n_positions": r.n_positions,
+                "sector_exposure": r.sector_exposure,
+                "monthly_return": r.monthly_return,
+                "ytd_return": r.ytd_return,
+                "drawdown": r.drawdown,
+            }
+            for r in rows
+        ],
     }

@@ -10,6 +10,16 @@ from app.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
+def _check_kill_switch(session) -> bool:
+    """Return True if kill switch is active and pipeline should be blocked."""
+    from app.services.kill_switch import KillSwitchMonitor
+    monitor = KillSwitchMonitor(session)
+    if monitor.is_kill_switch_active():
+        logger.warning("Kill switch is active; blocking pipeline task")
+        return True
+    return False
+
+
 def _get_sync_session():
     engine = create_engine(settings.sync_database_url)
     Session = sessionmaker(bind=engine)
@@ -47,6 +57,8 @@ def run_research_loop(self, n_iterations: int = 5, base_strategy_id: int | None 
     from app.services.research_loop import ResearchLoop
     session = _get_sync_session()
     try:
+        if _check_kill_switch(session):
+            return {"status": "blocked", "reason": "kill_switch_active"}
         loop = ResearchLoop(session, settings.mvp_tickers)
         results = loop.run_loop(n_iterations=n_iterations, base_strategy_id=base_strategy_id)
         return {"status": "ok", "results": results}
@@ -131,6 +143,8 @@ def generate_weekly_predictions(
 
     session = _get_sync_session()
     try:
+        if _check_kill_switch(session):
+            return {"status": "blocked", "reason": "kill_switch_active"}
         week_date = date.fromisoformat(week_starting) if week_starting else None
         tickers = tickers or settings.mvp_tickers
         prediction_svc = WeeklyPredictionService(session)
@@ -164,6 +178,8 @@ def open_paper_trades(
 
     session = _get_sync_session()
     try:
+        if _check_kill_switch(session):
+            return {"status": "blocked", "reason": "kill_switch_active"}
         week_date = date.fromisoformat(week_starting) if week_starting else None
         svc = PaperTradingService(session)
         count = svc.open_from_predictions(week_starting=week_date, strategy_id=strategy_id, top_n=top_n)
@@ -259,6 +275,13 @@ def run_full_pipeline(
     week_starting: str | None = None,
 ):
     """Full weekly pipeline in dependency order."""
+    session = _get_sync_session()
+    try:
+        if _check_kill_switch(session):
+            return {"status": "blocked", "reason": "kill_switch_active"}
+    finally:
+        session.close()
+
     tickers = tickers or settings.mvp_tickers
     workflow = chain(
         snapshot_universe.si(tickers=tickers),

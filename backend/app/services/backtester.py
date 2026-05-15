@@ -144,7 +144,7 @@ class Backtester:
         self.stop_loss = stop_loss
         self.take_profit = take_profit
 
-    def run(self) -> BacktestResult:
+    def run(self, return_raw_trades: bool = False) -> BacktestResult:
         trades: list[Trade] = []
         equity = 1.0
         equity_history = []
@@ -194,7 +194,10 @@ class Backtester:
             index=[w for w, _ in equity_history],
         ) if equity_history else pd.Series(dtype=float)
 
-        return BacktestResult(trades=trades, equity_curve=equity_series)
+        result = BacktestResult(trades=trades, equity_curve=equity_series)
+        if return_raw_trades:
+            result._raw_trades = trades  # type: ignore[attr-defined]
+        return result
 
     # ------------------------------------------------------------------
 

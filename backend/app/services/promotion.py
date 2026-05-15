@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.backtest import WalkForwardResult
 from app.models.strategy import ModelPromotion, Strategy
+from app.models.regime import MarketRegime
 from app.services.paper_trading import PaperTradingService
+from app.services.regime_detection import RegimeDetector
 
 
 class ResearchMetricGate:
@@ -101,6 +103,13 @@ class PromotionGate:
                 f"paper calibration_error_2pct {calibration_error} > {settings.max_paper_calibration_error_2pct}"
             )
 
+        # Regime-based performance check
+        regime_summary = self._check_regime_performance(strategy_id)
+        if regime_summary.get("weak_regimes"):
+            reasons.append(
+                f"underperforms in regimes: {', '.join(regime_summary['weak_regimes'])}"
+            )
+
         summary = {
             **research_summary,
             "deflated_sharpe": notes.get("deflated_sharpe"),
@@ -111,11 +120,36 @@ class PromotionGate:
             "benchmark_alpha": notes.get("benchmark_alpha"),
             "concentration": concentration,
             "paper": paper_summary,
+            "regime_analysis": regime_summary,
         }
         if reasons:
             summary["reason"] = "; ".join(reasons)
             return False, summary
         return True, summary
+
+    def _check_regime_performance(self, strategy_id: int) -> dict:
+        """Check strategy performance across market regimes.
+
+        Flags regimes where avg_sharpe < 0.2 as weak.
+        Returns dict with per-regime Sharpe and list of weak regimes.
+        """
+        detector = RegimeDetector(self.session)
+        analysis = detector.analyze_strategy_by_regime(strategy_id)
+        regimes = analysis.get("regimes", {})
+        if not regimes:
+            return {"per_regime": {}, "weak_regimes": []}
+
+        per_regime = {}
+        weak = []
+        for regime, data in regimes.items():
+            avg_sharpe = data.get("avg_sharpe")
+            per_regime[regime] = {
+                "avg_sharpe": avg_sharpe,
+                "n_folds": data.get("n_folds", 0),
+            }
+            if avg_sharpe is not None and avg_sharpe < 0.2:
+                weak.append(regime)
+        return {"per_regime": per_regime, "weak_regimes": weak}
 
     def promote(self, strategy_id: int) -> tuple[bool, dict]:
         passed, summary = self.evaluate(strategy_id)

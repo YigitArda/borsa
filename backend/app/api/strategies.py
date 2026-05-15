@@ -3,7 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.strategy import Strategy
+from app.models.strategy import Strategy, ModelVersion
+from app.services.model_registry import ModelRegistry
 
 router = APIRouter(prefix="/strategies", tags=["strategies"])
 
@@ -102,3 +103,65 @@ async def archive_strategy(strategy_id: int, db: AsyncSession = Depends(get_db))
     strategy.status = "archived"
     await db.commit()
     return {"message": "archived", "strategy_id": strategy_id}
+
+
+# ---------------------------------------------------------------------------
+# Model Versions
+# ---------------------------------------------------------------------------
+
+def _model_version_to_dict(mv: ModelVersion) -> dict:
+    return {
+        "id": mv.id,
+        "strategy_id": mv.strategy_id,
+        "model_path": mv.model_path,
+        "feature_set_version": mv.feature_set_version,
+        "train_start": mv.train_start,
+        "train_end": mv.train_end,
+        "metrics": mv.metrics,
+        "created_at": str(mv.created_at) if mv.created_at else None,
+        "status": mv.status,
+        "holdout_period": mv.holdout_period,
+        "validation_period": mv.validation_period,
+        "parent_model_id": mv.parent_model_id,
+        "promotion_reason": mv.promotion_reason,
+        "rejection_reason": mv.rejection_reason,
+        "hyperparams": mv.hyperparams,
+        "model_file_hash": mv.model_file_hash,
+    }
+
+
+@router.get("/{strategy_id}/model-versions")
+async def list_model_versions(strategy_id: int, db: AsyncSession = Depends(get_db)):
+    """List all model versions for a strategy, newest first."""
+    registry = ModelRegistry(db)
+    versions = await registry.get_all_versions(strategy_id)
+    return [_model_version_to_dict(v) for v in versions]
+
+
+@router.get("/{strategy_id}/model-versions/{version_id}")
+async def get_model_version(strategy_id: int, version_id: int, db: AsyncSession = Depends(get_db)):
+    """Get details for a specific model version."""
+    mv = await db.get(ModelVersion, version_id)
+    if mv is None or mv.strategy_id != strategy_id:
+        raise HTTPException(404, "Model version not found")
+    return _model_version_to_dict(mv)
+
+
+@router.post("/{strategy_id}/model-versions/{version_id}/archive")
+async def archive_model_version(
+    strategy_id: int,
+    version_id: int,
+    reason: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Archive a model version."""
+    mv = await db.get(ModelVersion, version_id)
+    if mv is None or mv.strategy_id != strategy_id:
+        raise HTTPException(404, "Model version not found")
+
+    registry = ModelRegistry(db)
+    try:
+        archived = await registry.archive_model(version_id, reason=reason)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return _model_version_to_dict(archived)

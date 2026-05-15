@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends
+from datetime import date
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +9,8 @@ from app.models.price import PriceWeekly, PriceDaily
 from app.models.feature import FeatureWeekly
 from app.models.financial import FinancialMetric
 from app.models.macro import MacroIndicator
+from app.models.data_quality_score import DataQualityScore
+from app.services.data_quality_scoring import DataQualityScorer
 
 router = APIRouter(prefix="/data-quality", tags=["data-quality"])
 
@@ -84,4 +87,136 @@ async def data_quality_report(db: AsyncSession = Depends(get_db)):
         },
         "total_stocks": len(stocks),
         "stocks_with_data": sum(1 for r in stock_reports if r["status"] == "ok"),
+    }
+
+
+@router.get("/scores")
+async def list_quality_scores(
+    week: date | None = Query(None, description="Week ending date (Friday). Defaults to latest available."),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get quality scores for all stocks for a given week."""
+    if week is None:
+        latest = (
+            await db.execute(select(func.max(DataQualityScore.week_ending)))
+        ).scalar()
+        week = latest
+
+    if week is None:
+        return {"week": None, "scores": [], "message": "No scores computed yet."}
+
+    rows = (
+        await db.execute(
+            select(DataQualityScore, Stock.ticker, Stock.name)
+            .join(Stock, DataQualityScore.stock_id == Stock.id)
+            .where(DataQualityScore.week_ending == week)
+            .order_by(DataQualityScore.overall_score.desc())
+        )
+    ).all()
+
+    scores = []
+    for row in rows:
+        dq, ticker, name = row
+        scores.append({
+            "ticker": ticker,
+            "name": name,
+            "stock_id": dq.stock_id,
+            "week_ending": str(dq.week_ending),
+            "overall_score": dq.overall_score,
+            "price_score": dq.price_score,
+            "feature_score": dq.feature_score,
+            "financial_score": dq.financial_score,
+            "news_score": dq.news_score,
+            "macro_score": dq.macro_score,
+            "flag": dq.details.get("flag") if dq.details else None,
+        })
+
+    return {
+        "week": str(week),
+        "count": len(scores),
+        "scores": scores,
+    }
+
+
+@router.get("/scores/{ticker}")
+async def get_stock_quality_score(
+    ticker: str,
+    week: date | None = Query(None, description="Week ending date (Friday). Defaults to latest available."),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get quality score for a specific stock ticker."""
+    stock = (
+        await db.execute(select(Stock).where(Stock.ticker == ticker.upper()))
+    ).scalar_one_or_none()
+
+    if stock is None:
+        return {"error": f"Ticker {ticker.upper()} not found"}
+
+    if week is None:
+        latest = (
+            await db.execute(
+                select(func.max(DataQualityScore.week_ending)).where(
+                    DataQualityScore.stock_id == stock.id
+                )
+            )
+        ).scalar()
+        week = latest
+
+    if week is None:
+        return {"ticker": ticker.upper(), "message": "No scores computed for this stock yet."}
+
+    dq = (
+        await db.execute(
+            select(DataQualityScore).where(
+                and_(
+                    DataQualityScore.stock_id == stock.id,
+                    DataQualityScore.week_ending == week,
+                )
+            )
+        )
+    ).scalar_one_or_none()
+
+    if dq is None:
+        return {"ticker": ticker.upper(), "week": str(week), "message": "No score found for this week."}
+
+    return {
+        "ticker": ticker.upper(),
+        "name": stock.name,
+        "week_ending": str(dq.week_ending),
+        "overall_score": dq.overall_score,
+        "price_score": dq.price_score,
+        "feature_score": dq.feature_score,
+        "financial_score": dq.financial_score,
+        "news_score": dq.news_score,
+        "macro_score": dq.macro_score,
+        "flag": dq.details.get("flag") if dq.details else None,
+        "details": dq.details,
+    }
+
+
+@router.post("/scores/compute")
+async def trigger_batch_scoring(
+    week: date | None = Query(None, description="Week ending date (Friday). Defaults to last Friday."),
+    db: AsyncSession = Depends(get_db),
+):
+    """Trigger batch scoring for all active stocks."""
+    if week is None:
+        today = date.today()
+        # Last Friday
+        offset = (today.weekday() - 4) % 7
+        week = today - __import__("datetime").timedelta(days=offset)
+        if offset == 0 and today.weekday() != 4:
+            # Edge case: today is not Friday but modulo gave 0 (shouldn't happen with %7)
+            week = today - __import__("datetime").timedelta(days=7)
+
+    scorer = DataQualityScorer(db)
+    results = await scorer.score_all_stocks_for_week(week)
+
+    poor_quality = sum(1 for r in results if r.overall_score < 50)
+
+    return {
+        "week": str(week),
+        "stocks_scored": len(results),
+        "poor_quality_flags": poor_quality,
+        "message": "Batch scoring completed successfully.",
     }

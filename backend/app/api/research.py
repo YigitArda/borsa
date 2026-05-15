@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +10,9 @@ from app.models.macro import MacroIndicator
 from app.models.feature import FeatureWeekly
 from app.models.price import PriceWeekly
 from app.models.stock import Stock
+from app.models.calibration import ProbabilityCalibration
+from app.models.ablation import AblationResult
+from app.models.kill_switch import KillSwitchEvent
 
 router = APIRouter(prefix="/research", tags=["research"])
 
@@ -313,7 +316,23 @@ async def get_trade_overlap(strategy_ids: str, db: AsyncSession = Depends(get_db
 
 @router.get("/regime-analysis/{strategy_id}")
 async def get_regime_analysis(strategy_id: int, db: AsyncSession = Depends(get_db)):
-    """Segment walk-forward fold performance by VIX regime: low (<15), mid (15-25), high (>25)."""
+    """Segment walk-forward fold performance by market regime (enhanced with new regime types)."""
+    from app.services.regime_detection import RegimeDetector
+
+    # Try new regime-based analysis first
+    sync_engine = db.sync_engine if hasattr(db, "sync_engine") else db.bind
+    from sqlalchemy.orm import sessionmaker
+    SessionLocal = sessionmaker(bind=sync_engine)
+    sync_session = SessionLocal()
+    try:
+        detector = RegimeDetector(sync_session)
+        result = detector.analyze_strategy_by_regime(strategy_id)
+        if result.get("regimes"):
+            return result
+    finally:
+        sync_session.close()
+
+    # Fallback to legacy VIX-only buckets if no regime data yet
     folds_q = await db.execute(
         select(WalkForwardResult).where(WalkForwardResult.strategy_id == strategy_id)
     )
@@ -321,7 +340,6 @@ async def get_regime_analysis(strategy_id: int, db: AsyncSession = Depends(get_d
     if not folds:
         return {"strategy_id": strategy_id, "regimes": {}}
 
-    # Get VIX data keyed by date
     vix_q = await db.execute(
         select(MacroIndicator).where(MacroIndicator.indicator_code == "VIX")
         .order_by(MacroIndicator.date)
@@ -367,3 +385,337 @@ async def get_regime_analysis(strategy_id: int, db: AsyncSession = Depends(get_d
         }
 
     return {"strategy_id": strategy_id, "regimes": summary}
+
+
+@router.get("/regime/current")
+async def get_current_regime(db: AsyncSession = Depends(get_db)):
+    """Return the most recent detected market regime."""
+    row = await db.execute(
+        select(MarketRegime)
+        .order_by(MarketRegime.week_ending.desc())
+        .limit(1)
+    )
+    regime = row.scalar_one_or_none()
+    if not regime:
+        return {"regime": None}
+    return {
+        "regime": {
+            "id": regime.id,
+            "week_starting": str(regime.week_starting),
+            "week_ending": str(regime.week_ending),
+            "regime_type": regime.regime_type,
+            "spy_200ma_ratio": regime.spy_200ma_ratio,
+            "vix_level": regime.vix_level,
+            "vix_change": regime.vix_change,
+            "nasdaq_spy_ratio": regime.nasdaq_spy_ratio,
+            "market_breadth": regime.market_breadth,
+            "yield_trend": regime.yield_trend,
+            "sector_rotation_score": regime.sector_rotation_score,
+            "confidence": regime.confidence,
+            "created_at": str(regime.created_at),
+        }
+    }
+
+
+@router.get("/regime/history")
+async def get_regime_history(
+    start: str | None = None,
+    end: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get regime history for a date range. Pass dates as ISO strings (YYYY-MM-DD)."""
+    from datetime import date as dt_date
+
+    query = select(MarketRegime).order_by(MarketRegime.week_ending)
+    if start:
+        try:
+            s = dt_date.fromisoformat(start)
+            query = query.where(MarketRegime.week_ending >= s)
+        except ValueError:
+            pass
+    if end:
+        try:
+            e = dt_date.fromisoformat(end)
+            query = query.where(MarketRegime.week_ending <= e)
+        except ValueError:
+            pass
+
+    rows = await db.execute(query)
+    regimes = rows.scalars().all()
+    return {
+        "count": len(regimes),
+        "regimes": [
+            {
+                "id": r.id,
+                "week_starting": str(r.week_starting),
+                "week_ending": str(r.week_ending),
+                "regime_type": r.regime_type,
+                "spy_200ma_ratio": r.spy_200ma_ratio,
+                "vix_level": r.vix_level,
+                "vix_change": r.vix_change,
+                "nasdaq_spy_ratio": r.nasdaq_spy_ratio,
+                "market_breadth": r.market_breadth,
+                "yield_trend": r.yield_trend,
+                "sector_rotation_score": r.sector_rotation_score,
+                "confidence": r.confidence,
+                "created_at": str(r.created_at),
+            }
+            for r in regimes
+        ],
+    }
+
+
+@router.post("/regime/detect")
+async def trigger_regime_detection(week_ending: str, db: AsyncSession = Depends(get_db)):
+    """Trigger regime detection for a specific week ending date (YYYY-MM-DD)."""
+    from datetime import date as dt_date
+    from app.services.regime_detection import RegimeDetector
+
+    try:
+        we = dt_date.fromisoformat(week_ending)
+    except ValueError:
+        return {"error": "Invalid week_ending format. Use YYYY-MM-DD."}
+
+    sync_engine = db.sync_engine if hasattr(db, "sync_engine") else db.bind
+    from sqlalchemy.orm import sessionmaker
+    SessionLocal = sessionmaker(bind=sync_engine)
+    sync_session = SessionLocal()
+    try:
+        detector = RegimeDetector(sync_session)
+        regime = detector.detect_regime_for_week(we)
+        if not regime:
+            return {"status": "failed", "reason": "insufficient_data"}
+        return {
+            "status": "ok",
+            "regime_id": regime.id,
+            "week_ending": str(regime.week_ending),
+            "regime_type": regime.regime_type,
+            "confidence": regime.confidence,
+        }
+    finally:
+        sync_session.close()
+
+
+@router.post("/ablation/{strategy_id}")
+async def run_ablation(strategy_id: int, db: AsyncSession = Depends(get_db)):
+    """Run ablation tests for a strategy (isolates each feature group)."""
+    from app.services.ablation import AblationTester
+    from sqlalchemy.orm import Session
+    from sqlalchemy import create_engine
+    from app.config import settings
+
+    sync_engine = db.sync_engine if hasattr(db, "sync_engine") else db.bind
+    from sqlalchemy.orm import sessionmaker
+    SessionLocal = sessionmaker(bind=sync_engine)
+    sync_session = SessionLocal()
+    try:
+        tester = AblationTester(sync_session)
+        results = tester.run_ablation_test(strategy_id)
+        return {"strategy_id": strategy_id, "status": "ok", "results": results}
+    finally:
+        sync_session.close()
+
+
+@router.get("/ablation/{strategy_id}/results")
+async def get_ablation_results(strategy_id: int, db: AsyncSession = Depends(get_db)):
+    """Get persisted ablation results for a strategy."""
+    rows = await db.execute(
+        select(AblationResult)
+        .where(AblationResult.strategy_id == strategy_id)
+        .order_by(AblationResult.created_at.desc())
+    )
+    records = rows.scalars().all()
+    return [
+        {
+            "id": r.id,
+            "feature_group": r.feature_group,
+            "features_removed": r.features_removed,
+            "sharpe": r.sharpe,
+            "profit_factor": r.profit_factor,
+            "max_drawdown": r.max_drawdown,
+            "win_rate": r.win_rate,
+            "avg_return": r.avg_return,
+            "sharpe_impact": r.sharpe_impact,
+            "profit_factor_impact": r.profit_factor_impact,
+            "drawdown_impact": r.drawdown_impact,
+            "stability_score": r.stability_score,
+            "created_at": str(r.created_at) if r.created_at else None,
+        }
+        for r in records
+    ]
+
+
+@router.get("/ablation/{strategy_id}/recommendations")
+async def get_ablation_recommendations(strategy_id: int, db: AsyncSession = Depends(get_db)):
+    """Get feature-group keep/remove recommendations based on ablation results."""
+    from app.services.ablation import AblationTester
+
+    rows = await db.execute(
+        select(AblationResult)
+        .where(AblationResult.strategy_id == strategy_id)
+    )
+    records = rows.scalars().all()
+    if not records:
+        return {"strategy_id": strategy_id, "recommendations": []}
+
+    result_dicts = [
+        {
+            "feature_group": r.feature_group,
+            "sharpe_impact": r.sharpe_impact,
+            "profit_factor_impact": r.profit_factor_impact,
+            "drawdown_impact": r.drawdown_impact,
+            "stability_score": r.stability_score,
+        }
+        for r in records
+    ]
+    recommendations = AblationTester.recommend_feature_groups(result_dicts)
+    return {"strategy_id": strategy_id, "recommendations": recommendations}
+
+
+@router.get("/kill-switch/status")
+async def get_kill_switch_status(db: AsyncSession = Depends(get_db)):
+    """Return current kill switch state and active warnings."""
+    from app.services.kill_switch import KillSwitchMonitor
+    from sqlalchemy.orm import Session
+    from sqlalchemy import create_engine
+    from app.config import settings
+
+    sync_engine = create_engine(settings.sync_database_url)
+    from sqlalchemy.orm import sessionmaker
+    SessionLocal = sessionmaker(bind=sync_engine)
+    sync_session = SessionLocal()
+    try:
+        monitor = KillSwitchMonitor(sync_session)
+        active = monitor.get_active_warnings()
+        return {
+            "active": len(active) > 0,
+            "count": len(active),
+            "warnings": [
+                {
+                    "id": e.id,
+                    "trigger_type": e.trigger_type,
+                    "strategy_id": e.strategy_id,
+                    "severity": e.severity,
+                    "reason": e.reason,
+                    "details": e.details,
+                    "triggered_at": str(e.triggered_at),
+                }
+                for e in active
+            ],
+        }
+    finally:
+        sync_session.close()
+
+
+@router.post("/kill-switch/resolve")
+async def resolve_kill_switch(event_id: int, resolved_by: str, db: AsyncSession = Depends(get_db)):
+    """Resolve an active kill switch event (admin only)."""
+    from app.services.kill_switch import KillSwitchMonitor
+    from sqlalchemy.orm import Session
+    from sqlalchemy import create_engine
+    from app.config import settings
+
+    sync_engine = create_engine(settings.sync_database_url)
+    from sqlalchemy.orm import sessionmaker
+    SessionLocal = sessionmaker(bind=sync_engine)
+    sync_session = SessionLocal()
+    try:
+        monitor = KillSwitchMonitor(sync_session)
+        event = monitor.resolve_kill_switch(event_id, resolved_by)
+        if not event:
+            raise HTTPException(status_code=404, detail="Kill switch event not found")
+        return {
+            "id": event.id,
+            "status": event.status,
+            "resolved_at": str(event.resolved_at),
+            "resolved_by": event.resolved_by,
+        }
+    finally:
+        sync_session.close()
+
+
+@router.get("/kill-switch/history")
+async def get_kill_switch_history(
+    limit: int = 50,
+    status: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get kill switch event history with optional status filter."""
+    query = select(KillSwitchEvent).order_by(KillSwitchEvent.created_at.desc())
+    if status:
+        query = query.where(KillSwitchEvent.status == status)
+    rows = await db.execute(query.limit(limit))
+    events = rows.scalars().all()
+    return {
+        "count": len(events),
+        "events": [
+            {
+                "id": e.id,
+                "trigger_type": e.trigger_type,
+                "strategy_id": e.strategy_id,
+                "severity": e.severity,
+                "reason": e.reason,
+                "details": e.details,
+                "triggered_at": str(e.triggered_at),
+                "resolved_at": str(e.resolved_at) if e.resolved_at else None,
+                "resolved_by": e.resolved_by,
+                "status": e.status,
+            }
+            for e in events
+        ],
+    }
+
+
+@router.get("/calibration/{strategy_id}")
+async def get_calibration(strategy_id: int, db: AsyncSession = Depends(get_db)):
+    """Return the latest calibration data for a strategy."""
+    row = await db.execute(
+        select(ProbabilityCalibration)
+        .where(ProbabilityCalibration.strategy_id == strategy_id)
+        .order_by(ProbabilityCalibration.week_starting.desc())
+        .limit(1)
+    )
+    cal = row.scalar_one_or_none()
+    if not cal:
+        return {"strategy_id": strategy_id, "calibration": None}
+    return {
+        "strategy_id": strategy_id,
+        "calibration": {
+            "week_starting": str(cal.week_starting),
+            "brier_score": cal.brier_score,
+            "calibration_error": cal.calibration_error,
+            "prob_buckets": cal.prob_buckets,
+            "reliability_data": cal.reliability_data,
+            "created_at": str(cal.created_at),
+        },
+    }
+
+
+@router.post("/calibration/{strategy_id}/compute")
+async def compute_calibration(strategy_id: int, db: AsyncSession = Depends(get_db)):
+    """Trigger calibration computation for a strategy and persist the result."""
+    from app.services.calibration import CalibrationAnalyzer
+    from sqlalchemy.orm import Session
+
+    # CalibrationAnalyzer expects a sync session; create one from the async engine
+    sync_engine = db.sync_engine if hasattr(db, "sync_engine") else db.bind
+    from sqlalchemy.orm import sessionmaker
+    SessionLocal = sessionmaker(bind=sync_engine)
+    sync_session = SessionLocal()
+    try:
+        analyzer = CalibrationAnalyzer(sync_session)
+        analysis = analyzer.analyze_strategy(strategy_id)
+        if analysis is None:
+            return {"strategy_id": strategy_id, "status": "insufficient_data"}
+        cal = analyzer.save_analysis(analysis)
+        return {
+            "strategy_id": strategy_id,
+            "status": "ok",
+            "calibration_id": cal.id,
+            "week_starting": str(cal.week_starting),
+            "brier_score": cal.brier_score,
+            "calibration_error": cal.calibration_error,
+            "sample_count": analysis.get("sample_count"),
+        }
+    finally:
+        sync_session.close()
