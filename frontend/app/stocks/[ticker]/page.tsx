@@ -22,7 +22,22 @@ interface StockResearch {
   technicals: Record<string, number | null>;
   financials: Record<string, number | null>;
   news: { headline: string; published_at: string; source: string; sentiment_score: number | null; sentiment_label: string }[];
-  signals: { week_ending: string; probability: number; rank: number }[];
+  signals: {
+    week_starting: string;
+    prob_2pct: number | null;
+    prob_loss_2pct: number | null;
+    expected_return: number | null;
+    confidence: string | null;
+    rank: number | null;
+    signal_summary: string | null;
+  }[];
+}
+
+interface GoodWeekFeatures {
+  ticker: string;
+  n_good: number;
+  n_bad: number;
+  features: Record<string, { good_avg: number | null; bad_avg: number | null; diff: number | null }>;
 }
 
 interface PriceRow {
@@ -40,6 +55,10 @@ async function getPrices(ticker: string): Promise<PriceRow[]> {
   try { return await api.get<PriceRow[]>(`/stocks/${ticker}/prices?limit=104`); } catch { return []; }
 }
 
+async function getGoodWeekFeatures(ticker: string): Promise<GoodWeekFeatures | null> {
+  try { return await api.get<GoodWeekFeatures>(`/stocks/${ticker}/good-week-features`); } catch { return null; }
+}
+
 function fmt(v: number | null | undefined, pct = false, decimals = 2): string {
   if (v == null) return "—";
   return pct ? `${(v * 100).toFixed(decimals)}%` : v.toFixed(decimals);
@@ -53,7 +72,11 @@ function sentimentColor(label: string | null) {
 
 export default async function StockPage({ params }: { params: { ticker: string } }) {
   const ticker = params.ticker.toUpperCase();
-  const [research, prices] = await Promise.all([getResearch(ticker), getPrices(ticker)]);
+  const [research, prices, goodWeekFeatures] = await Promise.all([
+    getResearch(ticker),
+    getPrices(ticker),
+    getGoodWeekFeatures(ticker),
+  ]);
 
   if (!research) {
     return <div className="text-slate-400 p-8">Stock not found: {ticker}</div>;
@@ -64,6 +87,7 @@ export default async function StockPage({ params }: { params: { ticker: string }
   const technicalItems = [
     { label: "RSI (14)", key: "rsi_14", pct: false },
     { label: "MACD Hist", key: "macd_hist", pct: false },
+    { label: "Momentum", key: "momentum", pct: true },
     { label: "BB Position", key: "bb_position", pct: false },
     { label: "Volume Z-Score", key: "volume_zscore", pct: false },
     { label: "vs SMA 50", key: "price_to_sma50", pct: true },
@@ -95,6 +119,10 @@ export default async function StockPage({ params }: { params: { ticker: string }
     { label: "Beta", key: "beta" },
     { label: "Market Cap", key: "market_cap" },
   ];
+
+  const topGoodWeekFeatures = goodWeekFeatures
+    ? Object.entries(goodWeekFeatures.features).slice(0, 12)
+    : [];
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -171,10 +199,44 @@ export default async function StockPage({ params }: { params: { ticker: string }
         </div>
       </div>
 
+      {/* Common features in good weeks */}
+      {topGoodWeekFeatures.length > 0 && goodWeekFeatures && (
+        <div className="rounded-lg border border-teal-700/40 bg-teal-900/10 p-4">
+          <h2 className="text-lg font-semibold text-teal-300 mb-1">Common Features in Good Entry Weeks (≥2%)</h2>
+          <p className="text-xs text-slate-400 mb-4">
+            Top features that differ most between winning weeks ({goodWeekFeatures.n_good}) and losing weeks ({goodWeekFeatures.n_bad}).
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-slate-300">
+              <thead>
+                <tr className="border-b border-slate-700 text-slate-400">
+                  <th className="text-left py-1 pr-4">Feature</th>
+                  <th className="text-right py-1 pr-4">Good Weeks Avg</th>
+                  <th className="text-right py-1 pr-4">Bad Weeks Avg</th>
+                  <th className="text-right py-1">Difference</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topGoodWeekFeatures.map(([fname, vals]) => (
+                  <tr key={fname} className="border-b border-slate-800">
+                    <td className="py-1.5 pr-4 font-mono text-teal-400">{fname}</td>
+                    <td className="text-right py-1.5 pr-4">{vals.good_avg?.toFixed(3) ?? "—"}</td>
+                    <td className="text-right py-1.5 pr-4">{vals.bad_avg?.toFixed(3) ?? "—"}</td>
+                    <td className={`text-right py-1.5 font-mono ${(vals.diff ?? 0) > 0 ? "text-green-400" : "text-red-400"}`}>
+                      {vals.diff != null ? (vals.diff > 0 ? "+" : "") + vals.diff.toFixed(3) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Technical indicators */}
       <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
         <h2 className="text-lg font-semibold text-white mb-4">Latest Technical Indicators</h2>
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-5 gap-3">
           {technicalItems.map(({ label, key, pct }) => {
             const val = research.technicals[key];
             return (
@@ -209,16 +271,34 @@ export default async function StockPage({ params }: { params: { ticker: string }
           <h2 className="text-lg font-semibold text-white mb-4">Signal History (Last 12 Weeks)</h2>
           <div className="space-y-2">
             {research.signals.map((s) => (
-              <div key={s.week_ending} className="flex items-center gap-4">
-                <span className="text-xs font-mono text-slate-400 w-28">{s.week_ending}</span>
-                <div className="flex-1 bg-slate-700 rounded-full h-2">
-                  <div
-                    className="bg-blue-500 rounded-full h-2 transition-all"
-                    style={{ width: `${(s.probability * 100).toFixed(0)}%` }}
-                  />
+              <div key={s.week_starting} className="space-y-1">
+                <div className="flex items-center gap-4">
+                  <span className="text-xs font-mono text-slate-400 w-28">{s.week_starting}</span>
+                  <div className="flex-1 bg-slate-700 rounded-full h-2">
+                    <div
+                      className="bg-blue-500 rounded-full h-2 transition-all"
+                      style={{ width: `${((s.prob_2pct ?? 0) * 100).toFixed(0)}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-mono text-blue-400 w-12">{fmt(s.prob_2pct, true, 1)}</span>
+                  {s.prob_loss_2pct != null && (
+                    <span className="text-xs font-mono text-red-400 w-12">↓{fmt(s.prob_loss_2pct, true, 1)}</span>
+                  )}
+                  {s.expected_return != null && (
+                    <span className={`text-xs font-mono w-14 ${s.expected_return > 0 ? "text-green-400" : "text-red-400"}`}>
+                      E[r]={fmt(s.expected_return, true, 1)}
+                    </span>
+                  )}
+                  <span className={`text-xs px-1.5 py-0.5 rounded ${
+                    s.confidence === "high" ? "bg-green-700 text-green-200" :
+                    s.confidence === "medium" ? "bg-yellow-700 text-yellow-200" :
+                    "bg-slate-700 text-slate-300"
+                  }`}>{s.confidence ?? "—"}</span>
+                  {s.rank != null && <span className="text-xs text-slate-500">#{s.rank}</span>}
                 </div>
-                <span className="text-xs font-mono text-blue-400 w-12">{fmt(s.probability, true, 1)}</span>
-                <span className="text-xs text-slate-400">Rank #{s.rank}</span>
+                {s.signal_summary && (
+                  <div className="text-xs text-slate-500 font-mono pl-32">{s.signal_summary}</div>
+                )}
               </div>
             ))}
           </div>
@@ -233,7 +313,7 @@ export default async function StockPage({ params }: { params: { ticker: string }
             {research.news.map((n, i) => (
               <div key={i} className="border-t border-slate-700 pt-3 first:border-0 first:pt-0">
                 <div className="flex items-start gap-2">
-                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${sentimentColor(n.sentiment_label)} bg-current/10`}>
+                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${sentimentColor(n.sentiment_label)}`}>
                     {n.sentiment_label}
                   </span>
                   <span className="text-sm text-slate-200 leading-snug">{n.headline}</span>

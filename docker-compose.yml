@@ -27,6 +27,7 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./backend:/app
+      - models_store:/app/models_store
     ports:
       - "8000:8000"
     environment:
@@ -44,6 +45,22 @@ services:
     command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
     volumes:
       - ./backend:/app
+      - models_store:/app/models_store
+    environment:
+      DATABASE_URL: postgresql+asyncpg://borsa:borsa123@postgres:5432/borsa
+      SYNC_DATABASE_URL: postgresql://borsa:borsa123@postgres:5432/borsa
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+      - postgres
+
+  beat:
+    build: ./backend
+    command: celery -A app.tasks.celery_app beat --loglevel=info --schedule=/tmp/celerybeat/celerybeat-schedule
+    volumes:
+      - ./backend:/app
+      - models_store:/app/models_store
+      - celerybeat_data:/tmp/celerybeat
     environment:
       DATABASE_URL: postgresql+asyncpg://borsa:borsa123@postgres:5432/borsa
       SYNC_DATABASE_URL: postgresql://borsa:borsa123@postgres:5432/borsa
@@ -67,3 +84,5 @@ services:
 
 volumes:
   postgres_data:
+  models_store:
+  celerybeat_data:

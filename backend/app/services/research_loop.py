@@ -7,6 +7,7 @@ Acceptance Gate → promotion if out-of-sample criteria met.
 The holdout period is NEVER seen by the proposer.
 """
 import copy
+import json
 import logging
 import random
 from datetime import date, timedelta
@@ -25,6 +26,7 @@ from app.services.statistical_tests import (
     concentration_check,
     get_spy_weekly_sharpe,
 )
+from app.services.mlflow_tracking import log_strategy_run
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +81,7 @@ class StrategyProposer:
         elif mutation_type == "change_model":
             new_config["model_type"] = random.choice([
                 "lightgbm", "logistic_regression", "random_forest",
-                "gradient_boosting", "xgboost",
+                "gradient_boosting", "xgboost", "neural_network",
             ])
 
         # Additional mutations
@@ -216,6 +218,11 @@ class ResearchLoop:
 
         outperforms_spy = summary.get("avg_sharpe", 0.0) > spy_sharpe
 
+        # Benchmark alpha: avg_return - SPY weekly return scaled to same period
+        avg_return_per_trade = float(sum(r for r in all_returns) / len(all_returns)) if all_returns else 0.0
+        spy_weekly_return = spy_sharpe / (52 ** 0.5) if spy_sharpe else 0.0
+        benchmark_alpha = round(avg_return_per_trade - spy_weekly_return, 4)
+
         # Tighten gate: also require permutation p-value < 0.1 and DSR > 0
         if passed and (perm_pvalue > 0.1 or dsr <= 0):
             passed = False
@@ -227,6 +234,7 @@ class ResearchLoop:
             "permutation_pvalue": round(perm_pvalue, 4),
             "spy_sharpe": round(spy_sharpe, 4),
             "outperforms_spy": outperforms_spy,
+            "benchmark_alpha": benchmark_alpha,
             "concentration": concentration,
         })
 
@@ -237,7 +245,7 @@ class ResearchLoop:
             parent_strategy_id=base_strategy_id,
             generation=generation,
             status="research",
-            notes=str(summary),
+            notes=json.dumps(summary),
         )
         self.session.add(strategy)
         self.session.flush()
@@ -257,29 +265,14 @@ class ResearchLoop:
             self.session.add(wfr)
 
         if passed:
-            strategy.status = "promoted"
-            # Record promotion event
-            promotion = ModelPromotion(
-                strategy_id=strategy.id,
-                avg_sharpe=summary.get("avg_sharpe"),
-                deflated_sharpe=dsr,
-                probabilistic_sr=psr,
-                permutation_pvalue=perm_pvalue,
-                spy_sharpe=spy_sharpe,
-                outperforms_spy=str(outperforms_spy),
-                avg_win_rate=summary.get("avg_win_rate"),
-                total_trades=summary.get("total_trades"),
-                min_drawdown=summary.get("min_drawdown"),
-                avg_profit_factor=summary.get("avg_profit_factor"),
-                concentration_ok=str(concentration.get("ok", False)),
-                details=summary,
-            )
-            self.session.add(promotion)
+            strategy.status = "candidate"
             self.session.commit()
-            logger.info(f"Strategy {strategy.id} PROMOTED: {summary}")
-            return {"status": "promoted", "strategy_id": strategy.id, **summary}
+            log_strategy_run(strategy.id, new_config, summary, "candidate")
+            logger.info(f"Strategy {strategy.id} CANDIDATE: {summary}")
+            return {"status": "candidate", "strategy_id": strategy.id, **summary}
         else:
             self.session.commit()
+            log_strategy_run(strategy.id, new_config, summary, "rejected")
             logger.info(f"Strategy {strategy.id} REJECTED: {summary}")
             return {"status": "rejected", "strategy_id": strategy.id, **summary}
 
@@ -289,7 +282,7 @@ class ResearchLoop:
             logger.info(f"Research iteration {i + 1}/{n_iterations}")
             result = self.run_one_iteration(base_strategy_id)
             results.append(result)
-            # If promoted, use it as next base
-            if result.get("status") == "promoted":
+            # If a strategy passed research gates, use it as next base while it paper-tests.
+            if result.get("status") == "candidate":
                 base_strategy_id = result.get("strategy_id")
         return results

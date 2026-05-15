@@ -7,10 +7,10 @@ Purge: removes rows within `embargo_weeks` of the train/test boundary.
 import logging
 import os
 import pickle
+from itertools import combinations
 from dataclasses import dataclass
 from datetime import date
 
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -19,6 +19,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 from sklearn.preprocessing import StandardScaler
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from app.config import settings
 
 try:
     import xgboost as xgb
@@ -36,11 +37,33 @@ from app.models.stock import Stock
 from app.models.feature import FeatureWeekly, LabelWeekly
 from app.services.backtester import Backtester
 from app.models.price import PriceDaily
+from app.services.price_adjustments import adjusted_ohlc
 
 logger = logging.getLogger(__name__)
 
-MODELS_DIR = "/app/models_store"
-os.makedirs(MODELS_DIR, exist_ok=True)
+try:
+    import lightgbm as lgb
+    HAS_LIGHTGBM = True
+except ImportError:
+    lgb = None
+    HAS_LIGHTGBM = False
+
+MODELS_DIR = os.getenv("MODELS_DIR", settings.models_dir)
+try:
+    os.makedirs(MODELS_DIR, exist_ok=True)
+except PermissionError:
+    MODELS_DIR = os.path.abspath("models_store")
+    os.makedirs(MODELS_DIR, exist_ok=True)
+
+NON_FEATURE_COLUMNS = {
+    "stock_id",
+    "week_ending",
+    "label",
+    "ticker",
+    "risk_target_1w",
+    "next_week_return",
+    "sector",
+}
 
 
 @dataclass
@@ -115,7 +138,15 @@ class ModelTrainer:
         merged["week_ending"] = pd.to_datetime(merged["week_ending"])
         return merged.dropna(subset=["label"])
 
-    def walk_forward(self, tickers: list[str], min_train_years: int = 5) -> list[WalkForwardFold]:
+    def walk_forward(self, tickers: list[str], min_train_years: int = 5, apply_liquidity_filter: bool = True) -> list[WalkForwardFold]:
+        if apply_liquidity_filter:
+            from app.services.data_ingestion import DataIngestionService
+            svc = DataIngestionService(self.session)
+            tickers = svc.liquidity_filter(tickers)
+            if not tickers:
+                logger.warning("All tickers filtered out by liquidity filter")
+                return []
+
         df = self.load_dataset(tickers)
         if df.empty:
             logger.warning("Empty dataset, skipping walk-forward")
@@ -167,10 +198,82 @@ class ModelTrainer:
 
         return folds
 
+    def combinatorial_purged_cv(
+        self,
+        tickers: list[str],
+        n_groups: int = 6,
+        n_test_groups: int = 2,
+        min_train_rows: int = 100,
+        apply_liquidity_filter: bool = True,
+    ) -> list[WalkForwardFold]:
+        """Combinatorial purged cross-validation for robustness checks.
+
+        This is a research validation tool, not a production deployment split.
+        Test groups are calendar-ordered week blocks; train rows inside the
+        configured embargo distance from any test week are purged.
+        """
+        if n_groups < 3:
+            raise ValueError("n_groups must be >= 3")
+        if n_test_groups < 1 or n_test_groups >= n_groups:
+            raise ValueError("n_test_groups must be in [1, n_groups)")
+
+        if apply_liquidity_filter:
+            from app.services.data_ingestion import DataIngestionService
+            tickers = DataIngestionService(self.session).liquidity_filter(tickers)
+            if not tickers:
+                return []
+
+        df = self.load_dataset(tickers)
+        if df.empty:
+            return []
+
+        df = df.sort_values("week_ending")
+        all_weeks = list(pd.to_datetime(sorted(df["week_ending"].unique())))
+        if len(all_weeks) < n_groups * 4:
+            return []
+
+        week_groups = np.array_split(all_weeks, n_groups)
+        folds: list[WalkForwardFold] = []
+        fold_num = 0
+        for test_group_ids in combinations(range(n_groups), n_test_groups):
+            test_weeks = set()
+            for group_id in test_group_ids:
+                test_weeks.update(week_groups[group_id])
+
+            test_mask = df["week_ending"].isin(test_weeks)
+            purge_weeks = set(test_weeks)
+            for week in test_weeks:
+                for offset in range(1, self.embargo_weeks + 1):
+                    purge_weeks.add(week - pd.Timedelta(weeks=offset))
+                    purge_weeks.add(week + pd.Timedelta(weeks=offset))
+
+            train = df[~df["week_ending"].isin(purge_weeks)]
+            test = df[test_mask]
+            if len(train) < min_train_rows or len(test) < 10:
+                continue
+
+            model, scaler = self._train(train)
+            metrics = self._evaluate(model, scaler, test, tickers)
+            folds.append(WalkForwardFold(
+                fold=fold_num,
+                train_start=train["week_ending"].min().date(),
+                train_end=train["week_ending"].max().date(),
+                test_start=test["week_ending"].min().date(),
+                test_end=test["week_ending"].max().date(),
+                metrics={k: v for k, v in metrics.items() if not k.startswith("_")},
+                n_trades=metrics.get("n_trades", 0),
+                trade_returns=metrics.get("_trade_returns", []),
+                trade_details=metrics.get("_trade_details", []),
+                equity_curve=metrics.get("_equity_curve", []),
+            ))
+            fold_num += 1
+
+        return folds
+
     def _train(self, train_df: pd.DataFrame):
         feature_cols = [c for c in self.features if c in train_df.columns]
         if not feature_cols:
-            feature_cols = [c for c in train_df.columns if c not in ["stock_id", "week_ending", "label", "ticker"]]
+            feature_cols = [c for c in train_df.columns if c not in NON_FEATURE_COLUMNS]
 
         X = train_df[feature_cols].fillna(0).values
         y = train_df["label"].values
@@ -180,12 +283,16 @@ class ModelTrainer:
 
         pos_weight = (y == 0).sum() / max((y == 1).sum(), 1)
 
-        if self.model_type == "lightgbm":
+        if self.model_type == "lightgbm" and HAS_LIGHTGBM:
             model = lgb.LGBMClassifier(
                 n_estimators=200, max_depth=4, num_leaves=15,
                 learning_rate=0.05, subsample=0.8, colsample_bytree=0.8,
                 scale_pos_weight=pos_weight, random_state=42, verbose=-1,
             )
+            model.fit(X_scaled, y)
+        elif self.model_type == "lightgbm" and not HAS_LIGHTGBM:
+            logger.warning("LightGBM is not installed; falling back to logistic_regression")
+            model = LogisticRegression(C=0.1, max_iter=1000, random_state=42)
             model.fit(X_scaled, y)
         elif self.model_type == "random_forest":
             model = RandomForestClassifier(
@@ -213,6 +320,18 @@ class ModelTrainer:
                 class_weights=[1, pos_weight], random_seed=42, verbose=0,
             )
             model.fit(X_scaled, y)
+        elif self.model_type == "neural_network":
+            from sklearn.neural_network import MLPClassifier
+            model = MLPClassifier(
+                hidden_layer_sizes=(64, 32),
+                activation="relu",
+                max_iter=300,
+                random_state=42,
+                early_stopping=True,
+                validation_fraction=0.1,
+                learning_rate_init=0.001,
+            )
+            model.fit(X_scaled, y)
         else:  # logistic regression baseline
             model = LogisticRegression(C=0.1, max_iter=1000, random_state=42)
             model.fit(X_scaled, y)
@@ -222,7 +341,7 @@ class ModelTrainer:
     def _evaluate(self, model, scaler, test_df: pd.DataFrame, tickers: list[str]) -> dict:
         feature_cols = [c for c in self.features if c in test_df.columns]
         if not feature_cols:
-            feature_cols = [c for c in test_df.columns if c not in ["stock_id", "week_ending", "label", "ticker"]]
+            feature_cols = [c for c in test_df.columns if c not in NON_FEATURE_COLUMNS]
 
         X = test_df[feature_cols].fillna(0).values
         y = test_df["label"].values
@@ -280,10 +399,7 @@ class ModelTrainer:
         return pd.DataFrame([{
             "date": r.date,
             "ticker": id_to_ticker[r.stock_id],
-            "open": r.open,
-            "high": r.high,
-            "low": r.low,
-            "close": r.close,
+            **adjusted_ohlc(r.open, r.high, r.low, r.close, r.adj_close),
         } for r in rows])
 
     def get_feature_importance(self, model, feature_cols: list[str]) -> dict[str, float]:
@@ -339,7 +455,7 @@ class ModelTrainer:
                 metrics = self._evaluate(model, scaler, test, [ticker])
                 feature_cols = [c for c in self.features if c in train.columns]
                 if not feature_cols:
-                    feature_cols = [c for c in train.columns if c not in ["stock_id", "week_ending", "label", "ticker"]]
+                    feature_cols = [c for c in train.columns if c not in NON_FEATURE_COLUMNS]
                 importance = self.get_feature_importance(model, feature_cols)
                 results[ticker] = {
                     "metrics": metrics,
@@ -380,7 +496,7 @@ class ModelTrainer:
                 metrics = self._evaluate(model, scaler, test, sector_tickers)
                 feature_cols = [c for c in self.features if c in train.columns]
                 if not feature_cols:
-                    feature_cols = [c for c in train.columns if c not in ["stock_id", "week_ending", "label", "ticker", "sector"]]
+                    feature_cols = [c for c in train.columns if c not in NON_FEATURE_COLUMNS]
                 importance = self.get_feature_importance(model, feature_cols)
                 results[sector] = {
                     "n_stocks": len(sector_tickers),

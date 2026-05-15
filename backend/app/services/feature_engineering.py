@@ -17,6 +17,7 @@ from app.models.feature import FeatureWeekly, LabelWeekly
 from app.services.financial_data import FinancialDataService
 from app.services.macro_data import MacroDataService, SECTOR_TO_ETF_CODE
 from app.services.news_service import NewsService
+from app.services.price_adjustments import adjusted_ohlc
 from app.services.social_sentiment import SocialSentimentService
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ TECHNICAL_FEATURES = [
     "atr_14",
     "volume_zscore",
     "return_1w", "return_4w", "return_12w",
+    "momentum",          # 12-week return skip-1 (academic momentum factor)
     "high_52w_distance",
     "low_52w_distance",
     "trend_strength",
@@ -47,7 +49,7 @@ FINANCIAL_FEATURES = [
 ]
 
 MACRO_FEATURES = [
-    "VIX", "VIX_WEEKLY", "VIX_CHANGE_W", "TNX_10Y",
+    "VIX", "VIX_WEEKLY", "VIX_CHANGE_W", "TNX_10Y", "FED_RATE_PROXY",
     "RISK_ON_SCORE", "sp500_trend_20w", "nasdaq_trend_20w",
     "cpi_proxy_trend_26w",
     "sector_xlk_trend20w", "sector_xlf_trend20w", "sector_xle_trend20w",
@@ -232,6 +234,12 @@ class FeatureEngineeringService:
         features["return_4w"] = float((1 + avail_weekly.iloc[-4:]).prod() - 1) if len(avail_weekly) >= 4 else np.nan
         features["return_12w"] = float((1 + avail_weekly.iloc[-12:]).prod() - 1) if len(avail_weekly) >= 12 else np.nan
 
+        # Momentum: 12-week return skipping most recent week (academic momentum factor)
+        if len(avail_weekly) >= 13:
+            features["momentum"] = float((1 + avail_weekly.iloc[-13:-1]).prod() - 1)
+        else:
+            features["momentum"] = np.nan
+
         # 52-week high/low distance
         year_close = close.iloc[-252:] if len(close) >= 252 else close
         high_52 = year_close.max()
@@ -316,8 +324,9 @@ class FeatureEngineeringService:
         if not rows:
             return pd.DataFrame()
         df = pd.DataFrame([{
-            "date": r.date, "open": r.open, "high": r.high,
-            "low": r.low, "close": r.close, "volume": r.volume,
+            "date": r.date,
+            **adjusted_ohlc(r.open, r.high, r.low, r.close, r.adj_close),
+            "volume": r.volume,
         } for r in rows])
         df["date"] = pd.to_datetime(df["date"])
         return df.set_index("date")

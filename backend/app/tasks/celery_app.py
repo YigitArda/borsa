@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 from app.config import settings
 
 celery_app = Celery(
@@ -12,13 +13,25 @@ celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
-    timezone="UTC",
+    timezone=settings.celery_timezone,
     enable_utc=True,
     task_track_started=True,
     beat_schedule={
-        "weekly-ingest": {
+        "weekly-full-pipeline": {
             "task": "app.tasks.pipeline_tasks.run_full_pipeline",
-            "schedule": 604800,  # every week
+            "schedule": crontab(
+                minute=settings.weekly_pipeline_minute,
+                hour=settings.weekly_pipeline_hour,
+                day_of_week=settings.weekly_pipeline_day_of_week,
+            ),
+        },
+        "daily-paper-trade-evaluation": {
+            "task": "app.tasks.pipeline_tasks.evaluate_paper_trades",
+            "schedule": crontab(
+                minute=settings.paper_eval_minute,
+                hour=settings.paper_eval_hour,
+                day_of_week=settings.paper_eval_day_of_week,
+            ),
         },
     },
 )

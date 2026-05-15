@@ -102,6 +102,7 @@ class FinancialDataService:
                         "metric_name": metric_name,
                         "value": float(val),
                         "is_ttm": True,
+                        "data_source": "yfinance",
                     })
                 except (TypeError, ValueError):
                     pass
@@ -111,12 +112,58 @@ class FinancialDataService:
 
         stmt = pg_insert(FinancialMetric).values(rows)
         stmt = stmt.on_conflict_do_update(
-            index_elements=["stock_id", "fiscal_period_end", "metric_name"],
-            set_={"value": stmt.excluded.value, "as_of_date": stmt.excluded.as_of_date},
+            index_elements=["stock_id", "fiscal_period_end", "metric_name", "as_of_date"],
+            set_={"value": stmt.excluded.value, "is_ttm": stmt.excluded.is_ttm, "data_source": stmt.excluded.data_source},
         )
         self.session.execute(stmt)
         self.session.commit()
         logger.info(f"Ingested {len(rows)} financial metrics for {ticker}")
+        return len(rows)
+
+    def ingest_pit_csv(self, path: str, data_source: str = "pit_csv") -> int:
+        """Import point-in-time financial metrics from a licensed/curated CSV.
+
+        CSV columns:
+          ticker,fiscal_period_end,as_of_date,metric_name,value[,is_ttm,data_source]
+        """
+        df = pd.read_csv(path)
+        required = {"ticker", "fiscal_period_end", "as_of_date", "metric_name", "value"}
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(f"missing columns: {', '.join(sorted(missing))}")
+
+        rows = []
+        for _, row in df.iterrows():
+            ticker = str(row["ticker"]).upper()
+            stock = self.session.execute(select(Stock).where(Stock.ticker == ticker)).scalar_one_or_none()
+            if not stock:
+                stock = Stock(ticker=ticker)
+                self.session.add(stock)
+                self.session.flush()
+            rows.append({
+                "stock_id": stock.id,
+                "fiscal_period_end": pd.to_datetime(row["fiscal_period_end"]).date(),
+                "as_of_date": pd.to_datetime(row["as_of_date"]).date(),
+                "metric_name": str(row["metric_name"]),
+                "value": float(row["value"]) if pd.notna(row["value"]) else None,
+                "is_ttm": bool(row.get("is_ttm", False)) if pd.notna(row.get("is_ttm", False)) else False,
+                "data_source": row.get("data_source") if pd.notna(row.get("data_source")) else data_source,
+            })
+
+        if not rows:
+            return 0
+
+        stmt = pg_insert(FinancialMetric).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["stock_id", "fiscal_period_end", "metric_name", "as_of_date"],
+            set_={
+                "value": stmt.excluded.value,
+                "is_ttm": stmt.excluded.is_ttm,
+                "data_source": stmt.excluded.data_source,
+            },
+        )
+        self.session.execute(stmt)
+        self.session.commit()
         return len(rows)
 
     def get_financial_features(self, stock_id: int, as_of: date) -> dict[str, float]:

@@ -132,6 +132,77 @@ async def get_analysis(ticker: str, db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/{ticker}/good-week-features")
+async def get_good_week_features(ticker: str, db: AsyncSession = Depends(get_db)):
+    """Return avg feature values for weeks where target_2pct_1w=1 vs =0.
+
+    Shows which features characterize historically strong entry weeks.
+    """
+    result = await db.execute(select(Stock).where(Stock.ticker == ticker.upper()))
+    stock = result.scalar_one_or_none()
+    if not stock:
+        raise HTTPException(404, f"Stock {ticker} not found")
+
+    # Get all labels
+    label_q = await db.execute(
+        select(LabelWeekly).where(
+            LabelWeekly.stock_id == stock.id,
+            LabelWeekly.target_name == "target_2pct_1w",
+        )
+    )
+    label_map = {r.week_ending: r.value for r in label_q.scalars().all()}
+    if not label_map:
+        return {"ticker": ticker, "good_weeks": {}, "bad_weeks": {}, "n_good": 0, "n_bad": 0}
+
+    good_weeks = {w for w, v in label_map.items() if v == 1.0}
+    bad_weeks = {w for w, v in label_map.items() if v == 0.0}
+
+    # Get all features for this stock
+    feat_q = await db.execute(
+        select(FeatureWeekly).where(FeatureWeekly.stock_id == stock.id)
+    )
+    feat_rows = feat_q.scalars().all()
+
+    from collections import defaultdict
+    good_vals: dict[str, list] = defaultdict(list)
+    bad_vals: dict[str, list] = defaultdict(list)
+
+    for r in feat_rows:
+        if r.value is None:
+            continue
+        if r.week_ending in good_weeks:
+            good_vals[r.feature_name].append(r.value)
+        elif r.week_ending in bad_weeks:
+            bad_vals[r.feature_name].append(r.value)
+
+    import numpy as np
+    all_features = set(good_vals) | set(bad_vals)
+    comparison = {}
+    for fname in sorted(all_features):
+        gv = good_vals.get(fname, [])
+        bv = bad_vals.get(fname, [])
+        g_mean = float(np.mean(gv)) if gv else None
+        b_mean = float(np.mean(bv)) if bv else None
+        diff = round(g_mean - b_mean, 4) if g_mean is not None and b_mean is not None else None
+        comparison[fname] = {"good_avg": round(g_mean, 4) if g_mean is not None else None,
+                              "bad_avg": round(b_mean, 4) if b_mean is not None else None,
+                              "diff": diff}
+
+    # Sort by absolute difference descending
+    sorted_comparison = dict(sorted(
+        comparison.items(),
+        key=lambda x: abs(x[1]["diff"]) if x[1]["diff"] is not None else 0,
+        reverse=True,
+    ))
+
+    return {
+        "ticker": ticker,
+        "n_good": len(good_weeks),
+        "n_bad": len(bad_weeks),
+        "features": sorted_comparison,
+    }
+
+
 @router.get("/{ticker}/research")
 async def get_research(ticker: str, db: AsyncSession = Depends(get_db)):
     """Full research view: return distribution, best/worst weeks, technicals, financials, news."""
@@ -252,11 +323,19 @@ async def get_research(ticker: str, db: AsyncSession = Depends(get_db)):
     sig_q = await db.execute(
         select(WeeklyPrediction)
         .where(WeeklyPrediction.stock_id == stock.id)
-        .order_by(WeeklyPrediction.week_ending.desc())
+        .order_by(WeeklyPrediction.week_starting.desc())
         .limit(12)
     )
     signals = [
-        {"week_ending": str(s.week_ending), "probability": s.probability, "rank": s.rank}
+        {
+            "week_starting": str(s.week_starting),
+            "prob_2pct": s.prob_2pct,
+            "prob_loss_2pct": s.prob_loss_2pct,
+            "expected_return": s.expected_return,
+            "confidence": s.confidence,
+            "rank": s.rank,
+            "signal_summary": s.signal_summary,
+        }
         for s in sig_q.scalars().all()
     ]
 
