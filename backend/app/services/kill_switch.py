@@ -406,8 +406,42 @@ class KillSwitchMonitor:
             severity,
             reason,
         )
+
+        if severity == "critical":
+            closed = self._close_open_positions(strategy_id)
+            logger.warning(
+                "Kill switch: %d açık paper trade kapatıldı (strategy_id=%s)",
+                closed, strategy_id,
+            )
+            if closed > 0:
+                event.details = {**(event.details or {}), "positions_closed": closed}
+                self.session.commit()
+
         self._send_notification(event)
         return event
+
+    def _close_open_positions(self, strategy_id: int | None = None) -> int:
+        """Close open paper trades when a critical kill switch is triggered."""
+        query = select(PaperTrade).where(
+            PaperTrade.status.in_(["open", "pending_data"])
+        )
+        if strategy_id is not None:
+            query = query.where(PaperTrade.strategy_id == strategy_id)
+
+        open_trades = self.session.execute(query).scalars().all()
+        closed_count = 0
+        for trade in open_trades:
+            trade.status = "kill_switch_closed"
+            trade.exit_date = date.today()
+            trade.evaluated_at = datetime.now(UTC).replace(tzinfo=None)
+            trade.hit_2pct = False
+            trade.hit_3pct = False
+            trade.hit_loss_2pct = True
+            closed_count += 1
+
+        if closed_count > 0:
+            self.session.commit()
+        return closed_count
 
     def resolve_kill_switch(
         self, event_id: int, resolved_by: str

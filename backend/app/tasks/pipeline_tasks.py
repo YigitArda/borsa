@@ -489,6 +489,186 @@ def ingest_short_interest(self, tickers: list[str] | None = None, use_finra: boo
         session.close()
 
 
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.update_pead_confirmations")
+def update_pead_confirmations(self, tickers: list[str] | None = None):
+    """Update PEAD price confirmations — loads price data from DB, no df needed."""
+    from app.services.pead_factor import PEADFactor
+    session = _get_sync_session()
+    try:
+        svc = PEADFactor(session)
+        tickers = tickers or settings.mvp_tickers
+        results = {}
+        for ticker in tickers:
+            try:
+                n = svc.update_price_confirmations(ticker)
+                results[ticker] = n
+            except Exception as e:
+                logger.error("PEAD confirmation failed %s: %s", ticker, e)
+                results[ticker] = 0
+        logger.info("PEAD confirmations updated: %s", results)
+        return {"status": "ok", "results": results}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.compute_data_quality_scores")
+def compute_data_quality_scores(self, week_str: str | None = None):
+    """Compute data quality scores for all active stocks and log poor-quality ones."""
+    from app.services.data_quality_scoring import DataQualityScorerSync
+    from datetime import timedelta
+    session = _get_sync_session()
+    try:
+        if week_str:
+            week = date.fromisoformat(week_str)
+        else:
+            today = date.today()
+            days_since_friday = (today.weekday() - 4) % 7
+            week = today - timedelta(days=days_since_friday)
+
+        scorer = DataQualityScorerSync(session)
+        result = scorer.score_all_stocks_sync(week)
+        if result["poor_quality_tickers"]:
+            logger.warning(
+                "Kalite uyarısı: %d hisse düşük veri kalitesi: %s",
+                len(result["poor_quality_tickers"]),
+                result["poor_quality_tickers"][:10],
+            )
+        return {"status": "ok", **result}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.run_portfolio_simulation_auto")
+def run_portfolio_simulation_auto(
+    self,
+    tickers: list[str] | None = None,
+    strategy_id: int | None = None,
+):
+    """Run portfolio simulation for the most recently promoted strategy."""
+    from sqlalchemy import select as _select
+    from app.models.strategy import Strategy
+    session = _get_sync_session()
+    try:
+        if strategy_id is None:
+            strategy = session.execute(
+                _select(Strategy)
+                .where(Strategy.status == "promoted")
+                .order_by(Strategy.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if not strategy:
+                logger.info("Portfolio simulation: promoted strateji yok, atlanıyor")
+                return {"status": "skipped", "reason": "no_promoted_strategy"}
+            strategy_id = strategy.id
+
+        try:
+            from app.services.portfolio_simulation import PortfolioSimulator, SimulationConfig
+            from app.models.portfolio import PortfolioSimulation, PortfolioSnapshot
+        except ImportError as e:
+            logger.warning("Portfolio simulation modülleri eksik: %s", e)
+            return {"status": "skipped", "reason": str(e)}
+
+        strategy = session.get(Strategy, strategy_id)
+        tickers = tickers or settings.mvp_tickers
+        config = strategy.config or {}
+
+        from app.services.model_training import ModelTrainer
+        from app.services.backtester import Backtester
+
+        trainer = ModelTrainer(session, config)
+        df = trainer.load_dataset(tickers)
+        if df.empty:
+            return {"status": "failed", "reason": "no_data"}
+
+        predict_fn = getattr(trainer, "predict_all", None)
+        predictions = predict_fn(df) if predict_fn else None
+        if predictions is None or (hasattr(predictions, "empty") and predictions.empty):
+            logger.warning("Portfolio simulation: tahmin üretilemedi")
+            return {"status": "failed", "reason": "no_predictions"}
+
+        price_df = df[["week_ending", "ticker", "open", "close", "high", "low"]].copy()
+        price_df = price_df.rename(columns={"week_ending": "date"})
+
+        threshold = config.get("threshold", 0.5)
+        top_n = config.get("top_n", 5)
+        holding_weeks = config.get("holding_weeks", 1)
+
+        backtester = Backtester(
+            predictions, price_df,
+            threshold=threshold, top_n=top_n,
+            holding_weeks=holding_weeks,
+        )
+        bt_result = backtester.run()
+
+        trades = [
+            {
+                "ticker": t.ticker,
+                "entry_date": t.entry_date,
+                "exit_date": t.exit_date,
+                "entry_price": t.entry_price,
+                "exit_price": t.exit_price,
+                "return_pct": t.return_pct,
+                "signal_strength": getattr(t, "signal_strength", None),
+            }
+            for t in bt_result.trades
+        ]
+
+        sim_config = SimulationConfig(
+            initial_capital=100_000.0,
+            max_positions=top_n,
+            max_position_weight=0.25,
+            transaction_cost_bps=getattr(settings, "transaction_cost_bps", 5),
+            slippage_bps=getattr(settings, "slippage_bps", 5),
+        )
+        simulator = PortfolioSimulator(sim_config)
+        sim_result = simulator.simulate(trades, price_df)
+
+        sim = PortfolioSimulation(
+            strategy_id=strategy_id,
+            initial_capital=100_000.0,
+            max_positions=top_n,
+            max_position_weight=0.25,
+            transaction_cost_bps=getattr(settings, "transaction_cost_bps", 5),
+            slippage_bps=getattr(settings, "slippage_bps", 5),
+            rebalance_frequency="weekly",
+        )
+        session.add(sim)
+        session.flush()
+
+        for snap in sim_result.snapshots:
+            session.add(PortfolioSnapshot(
+                simulation_id=sim.id,
+                date=snap["date"],
+                total_value=snap["total_value"],
+                cash_value=snap.get("cash_value"),
+                invested_value=snap.get("invested_value"),
+                n_positions=snap.get("n_positions"),
+                sector_exposure=snap.get("sector_exposure"),
+                monthly_return=snap.get("monthly_return"),
+                ytd_return=snap.get("ytd_return"),
+                drawdown=snap.get("drawdown"),
+            ))
+        session.commit()
+
+        logger.info(
+            "Portfolio simulation tamamlandı: strategy=%d sim_id=%d trades=%d",
+            strategy_id, sim.id, len(bt_result.trades),
+        )
+        return {
+            "status": "ok",
+            "simulation_id": sim.id,
+            "trades_executed": len(bt_result.trades),
+            "worst_month": getattr(sim_result, "worst_month", None),
+            "best_month": getattr(sim_result, "best_month", None),
+            "portfolio_volatility": getattr(sim_result, "portfolio_volatility", None),
+        }
+    except Exception as e:
+        logger.error("Portfolio simulation failed: %s", e, exc_info=True)
+        return {"status": "failed", "reason": str(e)}
+    finally:
+        session.close()
+
+
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.snapshot_universe")
 def snapshot_universe(self, index_name: str = "SP500", tickers: list[str] | None = None):
     """Record a survivorship-safe universe snapshot for today."""
@@ -534,7 +714,8 @@ def run_full_pipeline(
         ingest_pead.si(tickers=tickers),
         ingest_short_interest.si(tickers=tickers),
         compute_features.si(tickers=tickers),
-        # Detect regimes after macro data is fresh (uses SPY prices + VIX)
+        compute_data_quality_scores.si(),
+        update_pead_confirmations.si(tickers=tickers),
         detect_regimes.si(),
         generate_weekly_predictions.si(
             tickers=tickers,
@@ -542,6 +723,7 @@ def run_full_pipeline(
             strategy_id=strategy_id,
             open_paper=True,
         ),
+        run_portfolio_simulation_auto.si(tickers=tickers),
     )
     result = workflow.apply_async()
     return {
@@ -558,7 +740,10 @@ def run_full_pipeline(
             "ingest_pead",
             "ingest_short_interest",
             "compute_features",
+            "compute_data_quality_scores",
+            "update_pead_confirmations",
             "detect_regimes",
             "generate_weekly_predictions",
+            "run_portfolio_simulation_auto",
         ],
     }

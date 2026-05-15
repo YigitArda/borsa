@@ -46,8 +46,8 @@ BASE_STRATEGY = {
     "top_n": 5,
     "embargo_weeks": 4,
     "holding_weeks": 1,
-    "stop_loss": None,
-    "take_profit": None,
+    "stop_loss": -0.05,
+    "take_profit": 0.08,
 }
 
 ACCEPTANCE_GATE = {
@@ -96,7 +96,14 @@ class StrategyProposer:
         if self.tracker is not None and not self.tracker.should_explore():
             return self._choice(MUTATION_TYPES, self.tracker.get_mutation_type_weights()), None
 
-        return random.choice(MUTATION_TYPES), None
+        # Weight stop_loss and take_profit more heavily to encourage risk-control exploration
+        _mt_weights = {
+            "add_feature": 1.0, "remove_feature": 1.0, "change_threshold": 1.0,
+            "change_top_n": 0.8, "change_model": 0.8, "holding_period": 1.0,
+            "stop_loss": 1.5, "take_profit": 1.5,
+        }
+        weights = [_mt_weights.get(mt, 1.0) for mt in MUTATION_TYPES]
+        return random.choices(MUTATION_TYPES, weights=weights, k=1)[0], None
 
     def propose(self, base_config: dict, recent_metrics: list[dict] | None = None) -> dict:
         recent_metrics = recent_metrics or []
@@ -139,10 +146,10 @@ class StrategyProposer:
             new_config["holding_weeks"] = random.choice([1, 2, 4])
 
         elif mutation_type == "stop_loss":
-            new_config["stop_loss"] = random.choice([None, -0.03, -0.05, -0.07])
+            new_config["stop_loss"] = random.choice([None, -0.03, -0.05, -0.07, -0.10])
 
         elif mutation_type == "take_profit":
-            new_config["take_profit"] = random.choice([None, 0.05, 0.08, 0.12])
+            new_config["take_profit"] = random.choice([None, 0.05, 0.08, 0.10, 0.15])
 
         self.last_mutation = {
             "mutation_type": mutation_type,

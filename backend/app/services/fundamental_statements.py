@@ -111,8 +111,8 @@ class FundamentalStatementsService:
                         "value": float(val),
                         "is_ttm": False,
                     })
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Statement row parse failed [%s/%s]: %s", prefix, item, e)
         return rows
 
     def run_all(self, tickers: list[str]) -> dict:

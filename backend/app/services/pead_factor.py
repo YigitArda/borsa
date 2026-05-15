@@ -96,8 +96,8 @@ class PEADFactor:
                         "actual_eps": float(actual),
                         "expected_eps": float(expected),
                     })
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("PEAD earnings row parse failed [%s/%s]: %s", ticker, dt, e)
 
         if not rows:
             return 0
@@ -124,12 +124,32 @@ class PEADFactor:
         logger.info("PEAD ingested %d earnings records for %s", len(rows), ticker)
         return len(rows)
 
-    def update_price_confirmations(self, ticker: str, daily_df: pd.DataFrame) -> int:
-        """
-        After ingesting earnings dates, compute earnings_day_return, post_earnings_week1,
-        and earnings_volume_ratio from price data.
+    def _load_daily_df(self, stock_id: int) -> pd.DataFrame:
+        """Load daily price data from DB for a stock as a DataFrame indexed by date."""
+        from app.models.price import PriceDaily
+        rows = self.session.execute(
+            select(PriceDaily)
+            .where(PriceDaily.stock_id == stock_id)
+            .order_by(PriceDaily.date)
+        ).scalars().all()
+        if not rows:
+            return pd.DataFrame()
+        df = pd.DataFrame([{
+            "date": r.date,
+            "open": r.open,
+            "high": r.high,
+            "low": r.low,
+            "close": r.close or r.adj_close,
+            "volume": r.volume,
+        } for r in rows])
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        return df
 
-        daily_df: DataFrame with index=date, columns=[open, high, low, close, volume]
+    def update_price_confirmations(self, ticker: str, daily_df: pd.DataFrame | None = None) -> int:
+        """
+        Compute earnings_day_return, post_earnings_week1, earnings_volume_ratio
+        from price data. If daily_df is not passed, loads from DB automatically.
         """
         stock = self.session.execute(
             select(Stock).where(Stock.ticker == ticker)
@@ -137,8 +157,16 @@ class PEADFactor:
         if not stock:
             return 0
 
+        if daily_df is None:
+            daily_df = self._load_daily_df(stock.id)
+        if daily_df.empty:
+            return 0
+
         signals = self.session.execute(
-            select(PEADSignal).where(PEADSignal.stock_id == stock.id)
+            select(PEADSignal).where(
+                PEADSignal.stock_id == stock.id,
+                PEADSignal.earnings_day_return.is_(None),
+            )
         ).scalars().all()
 
         updated = 0
@@ -156,21 +184,22 @@ class PEADFactor:
                 # Post-earnings week 1 (5 trading days after earnings)
                 future = daily_df[daily_df.index > ed].iloc[:5]
                 if len(future) >= 5:
-                    week1_return = float(future["close"].iloc[-1] / future["close"].iloc[0] - 1)
-                    sig.post_earnings_week1 = week1_return
+                    sig.post_earnings_week1 = float(future["close"].iloc[-1] / future["close"].iloc[0] - 1)
 
                 # Volume surprise ratio: earnings week vs prior 4 weeks
-                prior = daily_df[daily_df.index < ed].tail(20)  # 4 weeks ≈ 20 days
+                prior = daily_df[daily_df.index < ed].tail(20)
                 earnings_week_vol = daily_df[daily_df.index >= ed].head(5)["volume"].sum()
                 if len(prior) >= 10 and prior["volume"].mean() > 0:
                     sig.earnings_volume_ratio = float(
                         earnings_week_vol / (prior["volume"].mean() * 5)
                     )
                 updated += 1
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("PEAD price confirmation failed for signal %s/%s: %s",
+                               ticker, sig.earnings_date, e)
 
         self.session.commit()
+        logger.info("PEAD confirmations: %s updated %d signals", ticker, updated)
         return updated
 
     # ------------------------------------------------------------------

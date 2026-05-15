@@ -152,8 +152,8 @@ class FeatureEngineeringService:
             nwr = wr.shift(-1)  # next week returns for training only
             try:
                 _price_nlp.fit(wr, nwr)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("PriceNLP fit failed [%s]: %s", stock.ticker if 'stock' in dir() else "unknown", e)
 
         # SP500 weekly returns for beta computation (loaded once per stock)
         _sp500_weekly = MomentumLowVolBatchService(self.session).get_sp500_weekly_returns()
@@ -208,8 +208,8 @@ class FeatureEngineeringService:
                 avail_wr = weekly_df[weekly_df.index < week_end]["weekly_return"].dropna()
                 nlp_features = _price_nlp.compute(avail_wr)
                 features.update(nlp_features)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("PriceNLP compute failed [%s]: %s", stock.ticker, e)
 
             # Momentum + Low-Vol features (1A + 1B beta + 1C QMJ)
             try:
@@ -225,8 +225,8 @@ class FeatureEngineeringService:
 
                 # QMJ (1C) — from already loaded financial features
                 features["qmj_score"] = compute_qmj_score(fin_features)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("MomentumLowVol features failed [%s]: %s", stock.ticker, e)
 
             # PEAD features (2A-2E) — reads from pead_signals DB
             try:
@@ -235,23 +235,23 @@ class FeatureEngineeringService:
                     stock.id, week_end_date, weekly_df
                 )
                 features.update(pead_features)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("PEAD features failed [%s]: %s", stock.ticker, e)
 
             # Short interest features (3A-3B) — reads from short_interest_data DB
             try:
                 week_end_date = week_end.date() if hasattr(week_end, "date") else week_end
                 si_features = _si_svc.compute_features(stock.id, week_end_date)
                 features.update(si_features)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Short interest features failed [%s]: %s", stock.ticker, e)
 
             # Alpha factor combiner (4A-4C) — combines all three factors
             try:
                 alpha_features = _alpha_combiner.compute_features_only(features)
                 features.update(alpha_features)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Alpha combiner features failed [%s]: %s", stock.ticker, e)
 
             for fname, fval in features.items():
                 feature_rows.append({

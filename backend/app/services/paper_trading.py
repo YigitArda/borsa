@@ -250,6 +250,7 @@ class PaperTradingService:
             "open": sum(1 for r in rows if r.status == "open"),
             "pending_data": sum(1 for r in rows if r.status == "pending_data"),
             "closed": len(closed),
+            "kill_switch_closed": sum(1 for r in rows if r.status == "kill_switch_closed"),
             "hit_rate_2pct": round(hit_rate, 4) if hit_rate is not None else None,
             "hit_rate_3pct": round(mean(1.0 if r.hit_3pct else 0.0 for r in closed), 4) if closed else None,
             "loss_rate_2pct": round(mean(1.0 if r.hit_loss_2pct else 0.0 for r in closed), 4) if closed else None,

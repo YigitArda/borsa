@@ -488,3 +488,95 @@ class DataQualityScorer:
 
         await self.db.commit()
         return results
+
+
+import logging as _dqs_log
+_dqs_logger = _dqs_log.getLogger(__name__)
+
+
+class DataQualityScorerSync:
+    """Sync wrapper for DataQualityScorer — use in Celery tasks (not async context)."""
+
+    def __init__(self, session):
+        self.session = session
+
+    def score_stock_sync(self, stock_id: int, week: date) -> dict:
+        from app.models.price import PriceDaily, PriceWeekly
+        from app.models.feature import FeatureWeekly
+
+        year_ago = week - timedelta(days=364)
+        week_start = week - timedelta(days=6)
+
+        weekly_count = self.session.execute(
+            select(func.count()).where(
+                PriceWeekly.stock_id == stock_id,
+                PriceWeekly.week_ending >= year_ago,
+                PriceWeekly.week_ending <= week,
+            )
+        ).scalar() or 0
+
+        daily_count = self.session.execute(
+            select(func.count()).where(
+                PriceDaily.stock_id == stock_id,
+                PriceDaily.date >= week_start,
+                PriceDaily.date <= week,
+            )
+        ).scalar() or 0
+
+        missing_weeks = max(0, 52 - weekly_count)
+        missing_days = max(0, 5 - daily_count)
+        price_score = max(0.0, 100.0 - missing_weeks * 5 - missing_days * 10)
+
+        feat_rows = self.session.execute(
+            select(FeatureWeekly.value).where(
+                FeatureWeekly.stock_id == stock_id,
+                FeatureWeekly.week_ending == week,
+            )
+        ).scalars().all()
+
+        total_feat = len(feat_rows)
+        if total_feat == 0:
+            feature_score = 0.0
+        else:
+            nan_count = sum(
+                1 for v in feat_rows
+                if v is None or (isinstance(v, float) and math.isnan(v))
+            )
+            feature_score = max(0.0, 100.0 - (nan_count / total_feat) * 60)
+
+        overall = price_score * 0.40 + feature_score * 0.35 + 70.0 * 0.25
+
+        return {
+            "stock_id": stock_id,
+            "week_ending": str(week),
+            "overall_score": round(overall, 2),
+            "price_score": round(price_score, 2),
+            "feature_score": round(feature_score, 2),
+            "flag": "poor_quality" if overall < 50 else "ok",
+        }
+
+    def score_all_stocks_sync(self, week: date, min_score: float = 50.0) -> dict:
+        from app.models.stock import Stock
+
+        stocks = self.session.execute(
+            select(Stock).where(Stock.is_active == True)
+        ).scalars().all()
+
+        results = []
+        poor_quality = []
+        for stock in stocks:
+            score = self.score_stock_sync(stock.id, week)
+            results.append(score)
+            if score["overall_score"] < min_score:
+                poor_quality.append(stock.ticker)
+
+        _dqs_logger.info(
+            "Data quality scoring: %d hisse, %d poor quality (<%d)",
+            len(results), len(poor_quality), min_score,
+        )
+        return {
+            "week": str(week),
+            "total_scored": len(results),
+            "poor_quality_tickers": poor_quality,
+            "scores": results,
+        }

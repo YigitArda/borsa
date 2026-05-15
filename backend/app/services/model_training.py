@@ -412,7 +412,10 @@ class ModelTrainer:
                 rf.load(start_date, end_date)
                 regime_filter = rf
             except Exception as exc:
-                logger.debug("Regime filter load skipped: %s", exc)
+                logger.warning(
+                    "Regime filter yüklenemedi: %s — position sizing regime-aware çalışmıyor",
+                    exc,
+                )
 
         # Build predictions df for backtester
         pred_df = test_df[["week_ending", "ticker", "stock_id"]].copy()
@@ -445,6 +448,11 @@ class ModelTrainer:
 
         bt_dict = bt_result.to_dict()
         bt_dict["kelly_fraction"] = round(kelly_fraction, 4)
+        if regime_filter is None:
+            logger.warning(
+                "UYARI: Regime filter aktif değil. "
+                "Tüm fold'lar regime filtresi olmadan çalışacak."
+            )
         if regime_filter is not None:
             regime_series = regime_filter.as_series()
             weeks_skipped = sum(1 for m in regime_series.values() if m == 0.0)
@@ -489,8 +497,8 @@ class ModelTrainer:
                 imps = abs(model.coef_[0])
                 total = sum(imps) or 1
                 return {f: float(v / total) for f, v in zip(feature_cols, imps)}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Feature importance extraction failed: %s", e)
         return {}
 
     def get_shap_values(self, model, X: np.ndarray, feature_cols: list[str]) -> dict[str, float]:

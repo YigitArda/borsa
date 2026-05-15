@@ -158,8 +158,8 @@ class FinancialDataService:
                             "is_ttm": False,
                             "data_source": "yfinance_erm",
                         })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("ERM score computation failed [stock_id=%s]: %s", stock_id, e)
 
         # forward_pe_change: compare current forward_pe to 3-month-ago stored value
         try:
@@ -198,8 +198,8 @@ class FinancialDataService:
                     "is_ttm": False,
                     "data_source": "yfinance_derived",
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("forward_pe_change computation failed [stock_id=%s]: %s", stock_id, e)
 
         return rows
 
