@@ -3,6 +3,8 @@ import hashlib
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from app.database import Base, get_engine
+import app.models  # noqa: F401 - register SQLAlchemy models before metadata creation
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -38,12 +40,21 @@ app.add_middleware(LoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_methods=["*"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-Correlation-Id"],
 )
 
 # Optional API key auth — only enforced if API_KEY is set in env
+@app.on_event("startup")
+async def ensure_sqlite_schema() -> None:
+    """Create tables automatically for local SQLite runtimes."""
+    if settings.database_url.startswith("sqlite"):
+        async with get_engine().begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
 _WRITE_ROUTES = {
     "/pipeline/",
     "/strategies/research/",
