@@ -55,4 +55,5 @@ class WalkForwardResult(Base):
     test_start: Mapped[date] = mapped_column(Date)
     test_end: Mapped[date] = mapped_column(Date)
     metrics: Mapped[dict] = mapped_column(JSON)
+    equity_curve: Mapped[list | None] = mapped_column(JSON)   # [{date, equity, benchmark}]
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

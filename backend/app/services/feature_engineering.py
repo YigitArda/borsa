@@ -17,6 +17,7 @@ from app.models.feature import FeatureWeekly, LabelWeekly
 from app.services.financial_data import FinancialDataService
 from app.services.macro_data import MacroDataService, SECTOR_TO_ETF_CODE
 from app.services.news_service import NewsService
+from app.services.social_sentiment import SocialSentimentService
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,14 @@ MACRO_FEATURES = [
     "sector_xlb_trend20w",
 ]
 
+SOCIAL_FEATURES = [
+    "social_mention_count",
+    "social_mention_momentum",
+    "social_sentiment_polarity",
+    "social_hype_risk",
+    "social_abnormal_attention",
+]
+
 VALUATION_PERCENTILE_FEATURES = [
     "pe_percentile_sector",
     "pb_percentile_sector",
@@ -68,7 +77,7 @@ NEWS_FEATURES = [
     "news_analyst_flag", "news_mgmt_flag", "news_recency_impact",
 ]
 
-ALL_FEATURES = TECHNICAL_FEATURES + FINANCIAL_FEATURES + MACRO_FEATURES + NEWS_FEATURES + VALUATION_PERCENTILE_FEATURES
+ALL_FEATURES = TECHNICAL_FEATURES + FINANCIAL_FEATURES + MACRO_FEATURES + NEWS_FEATURES + SOCIAL_FEATURES + VALUATION_PERCENTILE_FEATURES
 
 TARGET_NAMES = [
     "target_2pct_1w",      # next week return >= 2%
@@ -135,6 +144,11 @@ class FeatureEngineeringService:
             week_end_date = week_end.date() if hasattr(week_end, "date") else week_end
             news_features = news_svc.get_weekly_news_features(stock.id, week_end_date)
             features.update(news_features)
+
+            # Social sentiment features
+            social_svc = SocialSentimentService(self.session)
+            social_features = social_svc.get_weekly_social_features(stock.id, week_end_date)
+            features.update(social_features)
 
             for fname, fval in features.items():
                 feature_rows.append({

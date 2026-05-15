@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.strategy import Strategy, ModelPromotion
+from app.models.backtest import WalkForwardResult
 from app.services.model_training import ModelTrainer
 from app.services.feature_engineering import TECHNICAL_FEATURES
 from app.services.statistical_tests import (
@@ -240,6 +241,20 @@ class ResearchLoop:
         )
         self.session.add(strategy)
         self.session.flush()
+
+        # Save walk-forward fold results with equity curves
+        for fold in folds:
+            wfr = WalkForwardResult(
+                strategy_id=strategy.id,
+                fold=fold.fold,
+                train_start=fold.train_start,
+                train_end=fold.train_end,
+                test_start=fold.test_start,
+                test_end=fold.test_end,
+                metrics=fold.metrics,
+                equity_curve=fold.equity_curve or [],
+            )
+            self.session.add(wfr)
 
         if passed:
             strategy.status = "promoted"

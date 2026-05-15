@@ -52,8 +52,9 @@ class WalkForwardFold:
     test_end: date
     metrics: dict
     n_trades: int
-    trade_returns: list[float] = None     # individual trade returns for statistical tests
-    trade_details: list[dict] = None      # ticker + entry_date + return_pct
+    trade_returns: list[float] = None      # individual trade returns for statistical tests
+    trade_details: list[dict] = None       # ticker + entry_date + return_pct
+    equity_curve: list[dict] = None        # [{date, equity}] for charting
 
 
 class ModelTrainer:
@@ -158,6 +159,7 @@ class ModelTrainer:
                 n_trades=metrics.get("n_trades", 0),
                 trade_returns=metrics.get("_trade_returns", []),
                 trade_details=metrics.get("_trade_details", []),
+                equity_curve=metrics.get("_equity_curve", []),
             ))
 
             fold_num += 1
@@ -245,9 +247,13 @@ class ModelTrainer:
 
         trade_returns = [t.return_pct for t in bt_result.trades]
         trade_details = [
-            {"ticker": t.ticker, "entry_date": t.entry_date, "return_pct": t.return_pct}
+            {"ticker": t.ticker, "entry_date": str(t.entry_date), "return_pct": t.return_pct}
             for t in bt_result.trades
         ]
+        equity_curve = [
+            {"date": str(idx), "equity": float(val)}
+            for idx, val in bt_result.equity_curve.items()
+        ] if not bt_result.equity_curve.empty else []
 
         metrics = {
             "precision": round(precision, 4),
@@ -256,6 +262,7 @@ class ModelTrainer:
             **bt_result.to_dict(),
             "_trade_returns": trade_returns,
             "_trade_details": trade_details,
+            "_equity_curve": equity_curve,
         }
         return metrics
 
@@ -274,11 +281,13 @@ class ModelTrainer:
             "date": r.date,
             "ticker": id_to_ticker[r.stock_id],
             "open": r.open,
+            "high": r.high,
+            "low": r.low,
             "close": r.close,
         } for r in rows])
 
     def get_feature_importance(self, model, feature_cols: list[str]) -> dict[str, float]:
-        """Extract feature importances from the trained model."""
+        """Extract feature importances (tree-based native or SHAP fallback)."""
         try:
             if hasattr(model, "feature_importances_"):
                 imps = model.feature_importances_
@@ -290,6 +299,22 @@ class ModelTrainer:
                 return {f: float(v / total) for f, v in zip(feature_cols, imps)}
         except Exception:
             pass
+        return {}
+
+    def get_shap_values(self, model, X: np.ndarray, feature_cols: list[str]) -> dict[str, float]:
+        """Compute mean absolute SHAP values per feature (requires shap library)."""
+        try:
+            import shap
+            if hasattr(model, "predict_proba"):
+                explainer = shap.TreeExplainer(model) if hasattr(model, "feature_importances_") else shap.Explainer(model)
+                shap_values = explainer.shap_values(X)
+                if isinstance(shap_values, list):
+                    shap_values = shap_values[1]  # positive class
+                mean_abs = np.abs(shap_values).mean(axis=0)
+                total = mean_abs.sum() or 1
+                return {f: float(v / total) for f, v in zip(feature_cols, mean_abs)}
+        except Exception as e:
+            logger.debug(f"SHAP computation failed: {e}")
         return {}
 
     def train_per_stock(self, tickers: list[str], min_rows: int = 100) -> dict[str, dict]:

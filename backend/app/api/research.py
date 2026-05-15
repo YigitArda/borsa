@@ -40,6 +40,7 @@ async def get_walk_forward(strategy_id: int, db: AsyncSession = Depends(get_db))
             "test_start": str(f.test_start),
             "test_end": str(f.test_end),
             "metrics": f.metrics,
+            "equity_curve": f.equity_curve or [],
         }
         for f in folds
     ]
