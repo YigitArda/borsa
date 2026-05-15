@@ -26,6 +26,7 @@ from app.models.prediction import WeeklyPrediction
 from app.services.model_training import ModelTrainer
 from app.services.calibration import CalibrationAnalyzer
 from app.services.kill_switch import KillSwitchMonitor
+from app.services.strategy_bandit import StrategyBandit
 
 logger = logging.getLogger(__name__)
 
@@ -111,9 +112,13 @@ class WeeklyPredictionService:
         if strategy_id is not None:
             strategy = self.session.get(Strategy, strategy_id)
         else:
-            strategy = self.session.execute(
+            promoted = self.session.execute(
                 select(Strategy).where(Strategy.status == "promoted").order_by(Strategy.created_at.desc())
-            ).scalars().first()
+            ).scalars().all()
+            selected_id = StrategyBandit(self.session).select_strategy([s.id for s in promoted])
+            strategy = self.session.get(Strategy, selected_id) if selected_id else None
+            if strategy:
+                logger.info("Bandit selected promoted strategy %s for weekly predictions", strategy.id)
 
         if not strategy:
             logger.warning("No strategy found; skipping prediction generation")

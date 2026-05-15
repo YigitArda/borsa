@@ -10,6 +10,7 @@ from app.config import settings
 from app.models.backtest import WalkForwardResult
 from app.models.strategy import ModelPromotion, Strategy
 from app.models.regime import MarketRegime
+from app.services.meta_learner import MetaPromotionModel
 from app.services.paper_trading import PaperTradingService
 from app.services.regime_detection import RegimeDetector
 
@@ -109,6 +110,18 @@ class PromotionGate:
             reasons.append(
                 f"underperforms in regimes: {', '.join(regime_summary['weak_regimes'])}"
             )
+        if regime_summary.get("insufficient_regimes"):
+            reasons.append(
+                f"insufficient regime coverage: {', '.join(regime_summary['insufficient_regimes'])}"
+            )
+
+        meta_passed, meta_confidence, meta_reason = MetaPromotionModel(self.session).predict(
+            fold_metrics=fold_metrics,
+            notes=notes,
+            n_features=len((strategy.config or {}).get("features", [])),
+        )
+        if not meta_passed:
+            reasons.append(meta_reason)
 
         summary = {
             **research_summary,
@@ -121,6 +134,11 @@ class PromotionGate:
             "concentration": concentration,
             "paper": paper_summary,
             "regime_analysis": regime_summary,
+            "meta_learner": {
+                "passed": meta_passed,
+                "confidence": round(meta_confidence, 4),
+                "reason": meta_reason,
+            },
         }
         if reasons:
             summary["reason"] = "; ".join(reasons)
@@ -141,15 +159,20 @@ class PromotionGate:
 
         per_regime = {}
         weak = []
+        insufficient = []
         for regime, data in regimes.items():
             avg_sharpe = data.get("avg_sharpe")
+            n_folds = data.get("n_folds", 0)
             per_regime[regime] = {
                 "avg_sharpe": avg_sharpe,
-                "n_folds": data.get("n_folds", 0),
+                "n_folds": n_folds,
             }
             if avg_sharpe is not None and avg_sharpe < 0.2:
                 weak.append(regime)
-        return {"per_regime": per_regime, "weak_regimes": weak}
+        for required in ("bull", "bear", "sideways"):
+            if required in per_regime and per_regime[required].get("n_folds", 0) < 5:
+                insufficient.append(required)
+        return {"per_regime": per_regime, "weak_regimes": weak, "insufficient_regimes": insufficient}
 
     def promote(self, strategy_id: int) -> tuple[bool, dict]:
         passed, summary = self.evaluate(strategy_id)

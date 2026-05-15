@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.strategy import Strategy, ModelVersion
 from app.services.model_registry import ModelRegistry
+from app.tasks.celery_app import enqueue_task
 
 router = APIRouter(prefix="/strategies", tags=["strategies"])
 
@@ -30,10 +31,27 @@ async def list_strategies(status: str | None = None, db: AsyncSession = Depends(
 
 
 @router.post("/research/start")
-async def start_research(n_iterations: int = 5, base_strategy_id: int | None = None):
+async def start_research(
+    n_iterations: int = 5,
+    base_strategy_id: int | None = None,
+    mode: str = "sequential",
+    n_generations: int | None = None,
+):
     from app.tasks.pipeline_tasks import run_research_loop
-    task = run_research_loop.delay(n_iterations=n_iterations, base_strategy_id=base_strategy_id)
-    return {"task_id": task.id, "status": "queued", "n_iterations": n_iterations}
+    task = enqueue_task(
+        run_research_loop,
+        n_iterations=n_iterations,
+        base_strategy_id=base_strategy_id,
+        mode=mode,
+        n_generations=n_generations,
+    )
+    return {
+        "task_id": task.id,
+        "status": "queued",
+        "n_iterations": n_iterations,
+        "mode": mode,
+        "n_generations": n_generations,
+    }
 
 
 def _sync_promotion_gate():

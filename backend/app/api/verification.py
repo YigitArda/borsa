@@ -30,6 +30,7 @@ class CheckResultSchema(BaseModel):
 
 class SmokeReportSchema(BaseModel):
     overall: str
+    overall_status: str
     started_at: datetime
     finished_at: datetime
     checks: list[CheckResultSchema]
@@ -48,6 +49,7 @@ class HealthSchema(BaseModel):
 def _report_to_schema(report: SmokeTestReport) -> SmokeReportSchema:
     return SmokeReportSchema(
         overall=report.overall,
+        overall_status=report.overall,
         started_at=report.started_at,
         finished_at=report.finished_at,
         checks=[

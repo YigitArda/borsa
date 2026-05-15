@@ -17,7 +17,11 @@ from sqlalchemy.orm import Session
 
 from app.models.prediction import PaperTrade, WeeklyPrediction
 from app.models.price import PriceDaily
+from app.models.backtest import WalkForwardResult
+from app.models.strategy import Strategy
+from app.services.meta_learner import MetaPromotionModel
 from app.services.price_adjustments import adjusted_ohlc
+from app.services.strategy_bandit import StrategyBandit
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +92,8 @@ class PaperTradingService:
 
         evaluated = 0
         pending = 0
+        bandit_outcomes: list[tuple[int, bool]] = []
+        touched_strategy_ids: set[int] = set()
 
         for trade in open_rows:
             if as_of < trade.planned_exit_date:
@@ -149,12 +155,60 @@ class PaperTradingService:
             trade.status = "closed"
             trade.evaluated_at = datetime.now(UTC).replace(tzinfo=None)
             evaluated += 1
+            bandit_outcomes.append((trade.strategy_id, bool(trade.hit_2pct)))
+            touched_strategy_ids.add(trade.strategy_id)
 
         self.session.commit()
+
+        if bandit_outcomes:
+            bandit = StrategyBandit(self.session)
+            for strategy_id, hit in bandit_outcomes:
+                try:
+                    bandit.record_outcome(strategy_id, hit)
+                except Exception as exc:
+                    logger.warning("Bandit update failed for strategy %s: %s", strategy_id, exc)
+
+        for strategy_id in touched_strategy_ids:
+            self._record_meta_learner_outcome(strategy_id)
+
         summary = self.summary()
         summary.update({"evaluated_now": evaluated, "pending_now": pending})
         logger.info("Evaluated paper trades: %s closed, %s pending", evaluated, pending)
         return summary
+
+    def _record_meta_learner_outcome(self, strategy_id: int) -> None:
+        strategy = self.session.get(Strategy, strategy_id)
+        if not strategy:
+            return
+        paper = self.summary(strategy_id=strategy_id)
+        hit_rate = paper.get("hit_rate_2pct")
+        if hit_rate is None:
+            return
+
+        import json
+
+        notes = {}
+        if strategy.notes:
+            try:
+                notes = json.loads(strategy.notes)
+            except Exception:
+                notes = {}
+        folds = self.session.execute(
+            select(WalkForwardResult)
+            .where(WalkForwardResult.strategy_id == strategy_id)
+            .order_by(WalkForwardResult.fold)
+        ).scalars().all()
+        fold_metrics = [f.metrics for f in folds if f.metrics]
+        try:
+            MetaPromotionModel(self.session).record_outcome(
+                strategy_id=strategy_id,
+                fold_metrics=fold_metrics,
+                notes=notes,
+                n_features=len((strategy.config or {}).get("features", [])),
+                paper_hit_rate=float(hit_rate),
+            )
+        except Exception as exc:
+            logger.warning("Meta learner outcome recording failed for strategy %s: %s", strategy_id, exc)
 
     def summary(self, week_starting: date | None = None, strategy_id: int | None = None) -> dict:
         query = select(PaperTrade)

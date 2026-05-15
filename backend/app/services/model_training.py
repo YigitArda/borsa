@@ -178,7 +178,8 @@ class ModelTrainer:
                 continue
 
             model, scaler = self._train(train)
-            metrics = self._evaluate(model, scaler, test, tickers)
+            # Pass prior folds so Kelly is estimated from history, not future
+            metrics = self._evaluate(model, scaler, test, tickers, prior_folds=folds)
 
             folds.append(WalkForwardFold(
                 fold=fold_num,
@@ -338,7 +339,23 @@ class ModelTrainer:
 
         return model, scaler
 
-    def _evaluate(self, model, scaler, test_df: pd.DataFrame, tickers: list[str]) -> dict:
+    def _evaluate(
+        self,
+        model,
+        scaler,
+        test_df: pd.DataFrame,
+        tickers: list[str],
+        prior_folds: list | None = None,
+        kelly_fraction: float = 0.0,
+    ) -> dict:
+        """
+        Evaluate model on test_df.
+
+        Args:
+            prior_folds: Walk-forward folds preceding this one; used to compute
+                         Kelly fraction from historical trade data (no lookahead).
+            kelly_fraction: Pre-computed Kelly to use; overrides prior_folds if > 0.
+        """
         feature_cols = [c for c in self.features if c in test_df.columns]
         if not feature_cols:
             feature_cols = [c for c in test_df.columns if c not in NON_FEATURE_COLUMNS]
@@ -354,6 +371,30 @@ class ModelTrainer:
         recall = recall_score(y, preds, zero_division=0)
         f1 = f1_score(y, preds, zero_division=0)
 
+        # --- Kelly from prior folds (no lookahead: only folds before this one) ---
+        if kelly_fraction <= 0 and prior_folds:
+            from app.services.position_sizing import kelly_from_folds
+            kelly_est = kelly_from_folds(prior_folds)
+            kelly_fraction = kelly_est.fractional_kelly
+            logger.debug(
+                "Kelly from %d prior folds: fraction=%.4f win_rate=%.2f",
+                len(prior_folds), kelly_fraction, kelly_est.win_rate,
+            )
+
+        # --- Regime filter from DB ---
+        from app.services.regime_filter import RegimeFilter
+        test_weeks = sorted(test_df["week_ending"].dt.date.unique() if hasattr(test_df["week_ending"], "dt") else test_df["week_ending"].unique())
+        regime_filter = None
+        if test_weeks:
+            rf = RegimeFilter(self.session)
+            try:
+                start_date = test_weeks[0] if isinstance(test_weeks[0], __import__("datetime").date) else test_weeks[0].date()
+                end_date = test_weeks[-1] if isinstance(test_weeks[-1], __import__("datetime").date) else test_weeks[-1].date()
+                rf.load(start_date, end_date)
+                regime_filter = rf
+            except Exception as exc:
+                logger.debug("Regime filter load skipped: %s", exc)
+
         # Build predictions df for backtester
         pred_df = test_df[["week_ending", "ticker", "stock_id"]].copy()
         pred_df["prob"] = probs
@@ -361,7 +402,16 @@ class ModelTrainer:
         # Load prices for backtester
         price_df = self._load_prices_for_tickers(tickers)
 
-        bt = Backtester(pred_df, price_df, threshold=self.threshold, top_n=self.top_n)
+        bt = Backtester(
+            pred_df, price_df,
+            threshold=self.threshold,
+            top_n=self.top_n,
+            holding_weeks=self.config.get("holding_weeks", 1),
+            stop_loss=self.config.get("stop_loss"),
+            take_profit=self.config.get("take_profit"),
+            kelly_fraction=kelly_fraction,
+            regime_filter=regime_filter,
+        )
         bt_result = bt.run()
 
         trade_returns = [t.return_pct for t in bt_result.trades]
@@ -374,11 +424,18 @@ class ModelTrainer:
             for idx, val in bt_result.equity_curve.items()
         ] if not bt_result.equity_curve.empty else []
 
+        bt_dict = bt_result.to_dict()
+        bt_dict["kelly_fraction"] = round(kelly_fraction, 4)
+        if regime_filter is not None:
+            regime_series = regime_filter.as_series()
+            weeks_skipped = sum(1 for m in regime_series.values() if m == 0.0)
+            bt_dict["regime_weeks_skipped"] = weeks_skipped
+
         metrics = {
             "precision": round(precision, 4),
             "recall": round(recall, 4),
             "f1": round(f1, 4),
-            **bt_result.to_dict(),
+            **bt_dict,
             "_trade_returns": trade_returns,
             "_trade_details": trade_details,
             "_equity_curve": equity_curve,

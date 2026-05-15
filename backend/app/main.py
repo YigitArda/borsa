@@ -19,6 +19,7 @@ from app.api.auth import router as auth_router
 from app.api.jobs import router as jobs_router
 from app.api.selected_stocks import router as selected_stocks_router
 from app.api.export import router as export_router
+from app.api.scientific import router as scientific_router
 from app.config import settings
 from app.middleware.logging import LoggingMiddleware
 from app.logging_config import configure_logging
@@ -43,7 +44,17 @@ app.add_middleware(
 )
 
 # Optional API key auth — only enforced if API_KEY is set in env
-_WRITE_ROUTES = {"/pipeline/", "/strategies/research/", "/strategies/", "/weekly-picks/generate", "/weekly-picks/paper/", "/backtest/"}
+_WRITE_ROUTES = {
+    "/pipeline/",
+    "/strategies/research/",
+    "/strategies/",
+    "/weekly-picks/generate",
+    "/weekly-picks/paper/",
+    "/backtest/",
+    "/research/optimize",
+    "/scientific/",
+    "/api/v1/weekly-pipeline",
+}
 
 # Heavy read endpoints cached in Redis (TTL 5 minutes)
 _CACHED_ROUTES = {
@@ -62,6 +73,9 @@ _RATE_LIMITS = {
     "/backtest/portfolio": 5,
     "/strategies/research/start": 5,
     "/research/ablation": 5,
+    "/research/optimize": 5,
+    "/scientific/": 10,
+    "/api/v1/weekly-pipeline": 5,
     # Write endpoints
     "/pipeline/": 30,
     "/strategies/": 30,
@@ -220,6 +234,7 @@ app.include_router(auth_router)
 app.include_router(jobs_router)
 app.include_router(selected_stocks_router)
 app.include_router(export_router)
+app.include_router(scientific_router)
 
 app.add_api_websocket_route("/ws", websocket_endpoint)
 

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.backtest import BacktestRun, BacktestMetric
 from app.models.portfolio import PortfolioSimulation, PortfolioSnapshot
+from app.tasks.celery_app import enqueue_task
 
 router = APIRouter(prefix="/backtest", tags=["backtest"])
 
@@ -60,7 +61,7 @@ class PortfolioSimulationRequest(BaseModel):
 async def run_backtest(req: BacktestRequest, db: AsyncSession = Depends(get_db)):
     """Queue a research loop iteration with the given strategy config."""
     from app.tasks.pipeline_tasks import run_research_loop
-    task = run_research_loop.delay(n_iterations=1)
+    task = enqueue_task(run_research_loop, n_iterations=1)
     return {"task_id": task.id, "status": "queued"}
 
 

@@ -1,17 +1,26 @@
 """
-Backtester with transaction costs, slippage, and walk-forward validation.
+Backtester with transaction costs, slippage, walk-forward validation,
+fractional Kelly position sizing, and market regime filtering.
 
 Entry: Friday close signal → Monday open (next trading day)
 Exit: Following Friday close (1-week hold)
+
+Kelly sizing: position_size = kelly_fraction per trade (0 = equal weight).
+Regime filter: multiplies position size by regime multiplier;
+  bull → 1.0, sideways → 0.5, bear → 0.0 (skip week).
 """
 import logging
 from dataclasses import dataclass, field
 from datetime import date
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 
 from app.config import settings
+
+if TYPE_CHECKING:
+    from app.services.regime_filter import RegimeFilter
 
 logger = logging.getLogger(__name__)
 
@@ -110,20 +119,25 @@ class BacktestResult:
             "max_drawdown": round(self.max_drawdown, 4),
             "profit_factor": round(self.profit_factor, 4) if self.profit_factor != float("inf") else 99.0,
             "cagr": round(self.cagr, 4),
+            # Kelly & regime diagnostics (populated by caller if available)
+            "kelly_fraction": None,
+            "regime_weeks_skipped": None,
         }
 
 
 class Backtester:
     """
-    Simulates weekly signal → trade execution.
+    Simulates weekly signal → trade execution with Kelly sizing + regime filter.
 
-    predictions_df: DataFrame with columns [week_ending, ticker, stock_id, prob]
-    price_df: DataFrame with columns [date, ticker, open, close, high, low]
-    threshold: minimum probability to take a trade
-    top_n: max positions per week
-    holding_weeks: how many weeks to hold (1, 2, or 4)
-    stop_loss: max loss before forced exit (e.g. -0.05 = -5%)
-    take_profit: profit target for early exit (e.g. 0.08 = +8%)
+    predictions_df: DataFrame with [week_ending, ticker, stock_id, prob]
+    price_df:       DataFrame with [date, ticker, open, close, high, low]
+    threshold:      Minimum probability to take a trade.
+    top_n:          Max concurrent positions per week.
+    holding_weeks:  Hold period in weeks (1, 2, or 4).
+    stop_loss:      Max loss before forced exit (e.g. -0.05).
+    take_profit:    Profit target for early exit (e.g. 0.08).
+    kelly_fraction: Per-position Kelly fraction (0.0 = equal weight fallback).
+    regime_filter:  Optional RegimeFilter instance; None = no regime gating.
     """
 
     def __init__(
@@ -135,6 +149,8 @@ class Backtester:
         holding_weeks: int = 1,
         stop_loss: float | None = None,
         take_profit: float | None = None,
+        kelly_fraction: float = 0.0,
+        regime_filter: "RegimeFilter | None" = None,
     ):
         self.predictions = predictions_df
         self.prices = price_df
@@ -143,6 +159,8 @@ class Backtester:
         self.holding_weeks = holding_weeks
         self.stop_loss = stop_loss
         self.take_profit = take_profit
+        self.kelly_fraction = kelly_fraction
+        self.regime_filter = regime_filter
 
     def run(self, return_raw_trades: bool = False) -> BacktestResult:
         trades: list[Trade] = []
@@ -152,6 +170,15 @@ class Backtester:
         weeks = sorted(self.predictions["week_ending"].unique())
 
         for week_end in weeks:
+            # --- Regime gate ---
+            regime_mult = 1.0
+            if self.regime_filter is not None:
+                regime_mult = self.regime_filter.multiplier_for_week(week_end)
+                if regime_mult == 0.0:
+                    # bear regime: stay in cash this week
+                    equity_history.append((week_end, equity))
+                    continue
+
             week_preds = self.predictions[self.predictions["week_ending"] == week_end]
             candidates = week_preds[week_preds["prob"] >= self.threshold].nlargest(self.top_n, "prob")
 
@@ -181,8 +208,7 @@ class Backtester:
                 week_trades.append(t)
 
             if week_trades:
-                # Equal weight per position
-                position_size = 1.0 / len(week_trades)
+                position_size = self._position_size(len(week_trades), regime_mult)
                 week_return = sum(t.return_pct * position_size for t in week_trades)
                 equity *= (1 + week_return)
                 trades.extend(week_trades)
@@ -200,6 +226,23 @@ class Backtester:
         return result
 
     # ------------------------------------------------------------------
+
+    def _position_size(self, n_positions: int, regime_mult: float) -> float:
+        """
+        Compute per-trade position size fraction of total capital.
+
+        Kelly mode  (kelly_fraction > 0):
+            size = kelly_fraction * regime_mult
+            Total capital deployed = n * size (can be < 1 → partial cash holding)
+
+        Equal-weight mode (kelly_fraction == 0):
+            size = (1 / n_positions) * regime_mult
+        """
+        if n_positions <= 0:
+            return 0.0
+        if self.kelly_fraction > 0:
+            return self.kelly_fraction * regime_mult
+        return (1.0 / n_positions) * regime_mult
 
     def _apply_sl_tp(self, ticker: str, entry_price: float, week_end: date, planned_exit: float | None) -> tuple[float | None, str]:
         """Check intra-period daily prices for stop-loss/take-profit triggers."""

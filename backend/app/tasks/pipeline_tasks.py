@@ -53,15 +53,62 @@ def compute_features(self, tickers: list[str] | None = None):
 
 
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.run_research_loop")
-def run_research_loop(self, n_iterations: int = 5, base_strategy_id: int | None = None):
+def run_research_loop(
+    self,
+    n_iterations: int = 5,
+    base_strategy_id: int | None = None,
+    mode: str = "sequential",
+    n_generations: int | None = None,
+):
     from app.services.research_loop import ResearchLoop
     session = _get_sync_session()
     try:
         if _check_kill_switch(session):
             return {"status": "blocked", "reason": "kill_switch_active"}
         loop = ResearchLoop(session, settings.mvp_tickers)
-        results = loop.run_loop(n_iterations=n_iterations, base_strategy_id=base_strategy_id)
+        results = loop.run_loop(
+            n_iterations=n_iterations,
+            base_strategy_id=base_strategy_id,
+            mode=mode,
+            n_generations=n_generations,
+        )
         return {"status": "ok", "results": results}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.evaluate_individual_task")
+def evaluate_individual_task(self, config: dict, tickers: list[str] | None = None):
+    """Evaluate one strategy config for population/genetic search."""
+    from app.services.research_loop import ResearchLoop
+
+    session = _get_sync_session()
+    try:
+        if _check_kill_switch(session):
+            return [], None
+        loop = ResearchLoop(session, tickers or settings.mvp_tickers)
+        return loop.evaluate_config(config)
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.optimize_hyperparams")
+def optimize_hyperparams(
+    self,
+    base_config: dict | None = None,
+    tickers: list[str] | None = None,
+    n_trials: int | None = None,
+):
+    from app.services.hyperparam_optimizer import HyperparamOptimizer
+    from app.services.research_loop import BASE_STRATEGY
+
+    session = _get_sync_session()
+    try:
+        if _check_kill_switch(session):
+            return {"status": "blocked", "reason": "kill_switch_active"}
+        optimizer = HyperparamOptimizer(session, tickers or settings.mvp_tickers)
+        best = optimizer.optimize(base_config or BASE_STRATEGY, n_trials=n_trials or settings.bayesian_opt_trials)
+        return {"status": "ok", "best_config": best, "optuna": optimizer.status()}
     finally:
         session.close()
 
@@ -249,6 +296,136 @@ def import_corporate_actions(self, path: str, data_source: str = "csv"):
         session.close()
 
 
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.detect_regimes")
+def detect_regimes(self, start: str | None = None, end: str | None = None):
+    """
+    Detect and persist market regimes for all weeks in [start, end].
+    Defaults to last 2 years if start is omitted.
+    Must run after macro data is ingested (VIX, TNX, SPY prices).
+    """
+    from app.services.regime_detection import RegimeDetector
+    import pandas as pd
+
+    session = _get_sync_session()
+    try:
+        from datetime import timedelta
+        end_date = date.fromisoformat(end) if end else date.today()
+        start_date = date.fromisoformat(start) if start else end_date - timedelta(weeks=104)
+
+        detector = RegimeDetector(session)
+        detected = 0
+        skipped = 0
+
+        # Generate Friday dates for the range
+        all_fridays = pd.date_range(start=start_date, end=end_date, freq="W-FRI")
+        for friday in all_fridays:
+            week_date = friday.date()
+            try:
+                mr = detector.detect_regime_for_week(week_date)
+                if mr:
+                    detected += 1
+            except Exception as exc:
+                logger.warning("Regime detection failed for %s: %s", week_date, exc)
+                skipped += 1
+
+        logger.info("detect_regimes: detected=%d skipped=%d", detected, skipped)
+        return {"status": "ok", "detected": detected, "skipped": skipped}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.run_regime_aware_backtest")
+def run_regime_aware_backtest(
+    self,
+    strategy_id: int,
+    tickers: list[str] | None = None,
+    kelly_fraction: float = 0.0,
+    n_iterations: int = 1,
+):
+    """
+    Re-run walk-forward backtest for a strategy with Kelly sizing and regime filter active.
+    Results are saved to walk_forward_results (overwrite by strategy_id + fold).
+
+    This task is separate from the main research loop so it can be triggered
+    independently after regime data is updated.
+
+    Args:
+        strategy_id:   Strategy to backtest.
+        tickers:       Override ticker list (defaults to mvp_tickers).
+        kelly_fraction: Pre-set Kelly fraction (0 = auto-compute from prior folds).
+        n_iterations:  Number of research loop iterations to run (useful for re-tuning).
+    """
+    from app.services.model_training import ModelTrainer
+    from app.services.regime_filter import RegimeFilter
+    from app.models.strategy import Strategy
+    from app.models.backtest import WalkForwardResult
+
+    session = _get_sync_session()
+    try:
+        if _check_kill_switch(session):
+            return {"status": "blocked", "reason": "kill_switch_active"}
+
+        strategy = session.get(Strategy, strategy_id)
+        if not strategy:
+            return {"status": "error", "reason": f"strategy {strategy_id} not found"}
+
+        tickers = tickers or settings.mvp_tickers
+        trainer = ModelTrainer(session, strategy.config)
+        folds = trainer.walk_forward(tickers, min_train_years=5)
+
+        if not folds:
+            return {"status": "error", "reason": "no walk-forward folds produced"}
+
+        # Compute Kelly from all folds (for logging; actual per-fold Kelly uses prior folds)
+        from app.services.position_sizing import kelly_from_folds
+        kelly_est = kelly_from_folds(folds)
+
+        fold_summaries = []
+        for fold in folds:
+            wfr = session.execute(
+                __import__("sqlalchemy", fromlist=["select"]).select(WalkForwardResult).where(
+                    WalkForwardResult.strategy_id == strategy_id,
+                    WalkForwardResult.fold == fold.fold,
+                )
+            ).scalar_one_or_none()
+
+            if wfr:
+                wfr.metrics = fold.metrics
+                wfr.equity_curve = fold.equity_curve or []
+            else:
+                wfr = WalkForwardResult(
+                    strategy_id=strategy_id,
+                    fold=fold.fold,
+                    train_start=fold.train_start,
+                    train_end=fold.train_end,
+                    test_start=fold.test_start,
+                    test_end=fold.test_end,
+                    metrics=fold.metrics,
+                    equity_curve=fold.equity_curve or [],
+                )
+                session.add(wfr)
+
+            fold_summaries.append({
+                "fold": fold.fold,
+                "sharpe": fold.metrics.get("sharpe"),
+                "kelly_fraction": fold.metrics.get("kelly_fraction"),
+                "regime_weeks_skipped": fold.metrics.get("regime_weeks_skipped"),
+            })
+
+        session.commit()
+
+        return {
+            "status": "ok",
+            "strategy_id": strategy_id,
+            "n_folds": len(folds),
+            "kelly_auto": round(kelly_est.fractional_kelly, 4),
+            "kelly_win_rate": round(kelly_est.win_rate, 4),
+            "folds": fold_summaries,
+        }
+    finally:
+        session.close()
+
+
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.snapshot_universe")
 def snapshot_universe(self, index_name: str = "SP500", tickers: list[str] | None = None):
     """Record a survivorship-safe universe snapshot for today."""
@@ -292,6 +469,8 @@ def run_full_pipeline(
         ingest_financials.si(tickers=tickers),
         ingest_statements.si(tickers=tickers),
         compute_features.si(tickers=tickers),
+        # Detect regimes after macro data is fresh (uses SPY prices + VIX)
+        detect_regimes.si(),
         generate_weekly_predictions.si(
             tickers=tickers,
             week_starting=week_starting,
@@ -312,6 +491,7 @@ def run_full_pipeline(
             "ingest_financials",
             "ingest_statements",
             "compute_features",
+            "detect_regimes",
             "generate_weekly_predictions",
         ],
     }

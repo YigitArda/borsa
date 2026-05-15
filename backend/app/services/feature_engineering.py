@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.models.stock import Stock
 from app.models.price import PriceDaily, PriceWeekly
 from app.models.feature import FeatureWeekly, LabelWeekly
+from app.models.financial import FinancialMetric
 from app.services.financial_data import FinancialDataService
 from app.services.macro_data import MacroDataService, SECTOR_TO_ETF_CODE
 from app.services.news_service import NewsService
@@ -22,7 +23,7 @@ from app.services.social_sentiment import SocialSentimentService
 
 logger = logging.getLogger(__name__)
 
-FEATURE_SET_VERSION = "v2"  # bumped: now includes financial, macro, news features
+FEATURE_SET_VERSION = "v3"  # bumped: added free_cashflow, net_income_growth
 
 TECHNICAL_FEATURES = [
     "rsi_14", "macd", "macd_signal", "macd_hist",
@@ -46,6 +47,7 @@ FINANCIAL_FEATURES = [
     "ev_to_ebitda", "gross_margin", "operating_margin", "net_margin",
     "roe", "roa", "revenue_growth", "earnings_growth",
     "debt_to_equity", "current_ratio", "beta",
+    "free_cashflow", "net_income_growth",
 ]
 
 MACRO_FEATURES = [

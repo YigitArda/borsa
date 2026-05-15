@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     mlflow_tracking_uri: str | None = None
     mlflow_experiment_name: str = "borsa-research"
 
+    # Self-improving research controls
+    research_max_daily_iterations: int = 100
+    bayesian_opt_interval: int = 10
+    bayesian_opt_trials: int = 50
+    enable_bayesian_optimization: bool = True
+    genetic_population_size: int = 10
+    population_search_size: int = 10
+
     # API auth — set API_KEY env var to enable Bearer token protection on write routes
     api_key: str | None = None
 

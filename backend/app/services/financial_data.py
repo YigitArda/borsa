@@ -55,6 +55,7 @@ YFINANCE_MAP = {
     "roa": "returnOnAssets",
     "revenue_growth": "revenueGrowth",
     "earnings_growth": "earningsGrowth",
+    "net_income_growth": "earningsGrowth",  # best yfinance proxy for net income growth
     "eps_ttm": "trailingEps",
     "debt_to_equity": "debtToEquity",
     "current_ratio": "currentRatio",

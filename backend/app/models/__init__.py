@@ -16,6 +16,12 @@ from app.models.regime import MarketRegime
 from app.models.kill_switch import KillSwitchEvent, KillSwitchConfig
 from app.models.model_run import ModelRun, StrategyRule, SelectedStock
 from app.models.user import User, ApiKey
+from app.models.mutation_memory import MutationMemory
+from app.models.hyperparam_trial import HyperparamTrial
+from app.models.meta_learner_data import MetaLearnerTrainingData
+from app.models.strategy_bandit_arm import StrategyBanditArm
+from app.models.rl_agent_qtable import RLAgentQTable
+from app.models.research_budget import ResearchTrialBudget
 
 __all__ = [
     "Stock", "StockUniverseSnapshot", "TickerAlias", "CorporateAction",
@@ -36,4 +42,10 @@ __all__ = [
     "KillSwitchEvent", "KillSwitchConfig",
     "ModelRun", "StrategyRule", "SelectedStock",
     "User", "ApiKey",
+    "MutationMemory",
+    "HyperparamTrial",
+    "MetaLearnerTrainingData",
+    "StrategyBanditArm",
+    "RLAgentQTable",
+    "ResearchTrialBudget",
 ]

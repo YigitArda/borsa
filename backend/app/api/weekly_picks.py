@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.prediction import PaperTrade, WeeklyPrediction
 from app.models.stock import Stock
+from app.tasks.celery_app import enqueue_task
 
 router = APIRouter(prefix="/weekly-picks", tags=["weekly-picks"])
 
@@ -48,7 +49,8 @@ async def get_weekly_picks(week: str | None = None, strategy_id: int | None = No
 async def generate_picks(strategy_id: int | None = None, week: str | None = None, open_paper: bool = True):
     """Trigger weekly prediction generation via Celery."""
     from app.tasks.pipeline_tasks import generate_weekly_predictions
-    task = generate_weekly_predictions.delay(
+    task = enqueue_task(
+        generate_weekly_predictions,
         week_starting=week,
         strategy_id=strategy_id,
         open_paper=open_paper,
@@ -127,12 +129,12 @@ async def get_paper_trades(
 @router.post("/paper/open")
 async def open_paper_trades(week: str | None = None, strategy_id: int | None = None, top_n: int | None = None):
     from app.tasks.pipeline_tasks import open_paper_trades as open_task
-    task = open_task.delay(week_starting=week, strategy_id=strategy_id, top_n=top_n)
+    task = enqueue_task(open_task, week_starting=week, strategy_id=strategy_id, top_n=top_n)
     return {"task_id": task.id, "status": "queued"}
 
 
 @router.post("/paper/evaluate")
 async def evaluate_paper_trades(as_of: str | None = None):
     from app.tasks.pipeline_tasks import evaluate_paper_trades as eval_task
-    task = eval_task.delay(as_of=as_of)
+    task = enqueue_task(eval_task, as_of=as_of)
     return {"task_id": task.id, "status": "queued"}

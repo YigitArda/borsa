@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from celery import Celery
 from celery.schedules import crontab
 from app.config import settings
@@ -16,6 +18,8 @@ celery_app.conf.update(
     timezone=settings.celery_timezone,
     enable_utc=True,
     task_track_started=True,
+    task_publish_retry=False,
+    broker_connection_timeout=2,
     beat_schedule={
         "weekly-full-pipeline": {
             "task": "app.tasks.pipeline_tasks.run_full_pipeline",
@@ -35,3 +39,10 @@ celery_app.conf.update(
         },
     },
 )
+
+
+def enqueue_task(task, **kwargs):
+    """Queue a Celery task with a deterministic no-broker path for tests."""
+    if settings.environment.lower() == "test":
+        return SimpleNamespace(id=f"test-{getattr(task, 'name', 'task')}")
+    return task.apply_async(kwargs=kwargs, retry=False)

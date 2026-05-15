@@ -10,6 +10,7 @@ from app.models.macro import MacroIndicator
 from app.models.feature import FeatureWeekly
 from app.models.price import PriceWeekly
 from app.models.stock import Stock
+from app.models.regime import MarketRegime
 from app.models.calibration import ProbabilityCalibration
 from app.models.ablation import AblationResult
 from app.models.kill_switch import KillSwitchEvent
@@ -719,3 +720,115 @@ async def compute_calibration(strategy_id: int, db: AsyncSession = Depends(get_d
         }
     finally:
         sync_session.close()
+
+
+def _make_sync_session():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.config import settings
+
+    engine = create_engine(settings.sync_database_url)
+    SessionLocal = sessionmaker(bind=engine)
+    return SessionLocal()
+
+
+@router.get("/mutation-memory")
+async def get_mutation_memory():
+    """Return learned mutation and feature scores for the directed search layer."""
+    from app.services.mutation_memory import MutationScoreTracker
+
+    session = _make_sync_session()
+    try:
+        return MutationScoreTracker(session).summary()
+    finally:
+        session.close()
+
+
+@router.get("/optuna-status")
+async def get_optuna_status(study_name: str = "borsa_strategy"):
+    """Return Bayesian optimization study status."""
+    from app.config import settings
+    from app.services.hyperparam_optimizer import HyperparamOptimizer
+
+    session = _make_sync_session()
+    try:
+        optimizer = HyperparamOptimizer(session, settings.mvp_tickers, study_name=study_name)
+        return optimizer.status()
+    finally:
+        session.close()
+
+
+@router.post("/optimize")
+async def start_hyperparam_optimization(n_trials: int | None = None):
+    """Queue Bayesian hyperparameter optimization as a Celery task."""
+    from app.tasks.celery_app import enqueue_task
+    from app.tasks.pipeline_tasks import optimize_hyperparams
+
+    task = enqueue_task(optimize_hyperparams, n_trials=n_trials)
+    return {"status": "queued", "task_id": task.id, "n_trials": n_trials}
+
+
+@router.get("/bandit/arms")
+async def get_bandit_arms():
+    """Return Thompson-sampling state for promoted strategy selection."""
+    from app.services.strategy_bandit import StrategyBandit
+
+    session = _make_sync_session()
+    try:
+        return {"arms": StrategyBandit(session).arm_summary()}
+    finally:
+        session.close()
+
+
+@router.get("/rl/status")
+async def get_rl_status():
+    """Return Q-learning agent state size and exploration rate."""
+    from app.services.rl_agent import RLStrategyAgent
+
+    session = _make_sync_session()
+    try:
+        return RLStrategyAgent(session).status()
+    finally:
+        session.close()
+
+
+@router.get("/rl/actions/{strategy_id}")
+async def get_rl_actions(strategy_id: int, db: AsyncSession = Depends(get_db)):
+    """Rank mutation actions for the current strategy state."""
+    strategy = await db.get(Strategy, strategy_id)
+    if not strategy:
+        raise HTTPException(404, "Strategy not found")
+
+    rows = await db.execute(
+        select(WalkForwardResult)
+        .where(WalkForwardResult.strategy_id == strategy_id)
+        .order_by(WalkForwardResult.fold)
+    )
+    recent_metrics = [r.metrics for r in rows.scalars().all() if r.metrics]
+
+    from app.services.rl_agent import RLStrategyAgent
+    session = _make_sync_session()
+    try:
+        agent = RLStrategyAgent(session)
+        return {
+            "strategy_id": strategy_id,
+            "actions": agent.best_actions(strategy.config or {}, recent_metrics),
+        }
+    finally:
+        session.close()
+
+
+@router.get("/meta-learner/status")
+async def get_meta_learner_status():
+    """Return training sample count and current coefficient importance."""
+    from app.services.meta_learner import MetaPromotionModel
+
+    session = _make_sync_session()
+    try:
+        model = MetaPromotionModel(session)
+        return {
+            "n_samples": model.n_samples(),
+            "feature_importance": model.feature_importance(),
+        }
+    finally:
+        session.close()
