@@ -1,0 +1,32 @@
+from datetime import datetime
+from sqlalchemy import String, DateTime, Integer, Text, JSON, func
+from sqlalchemy.orm import Mapped, mapped_column
+from app.database import Base
+
+
+class Strategy(Base):
+    __tablename__ = "strategies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False)
+    parent_strategy_id: Mapped[int | None] = mapped_column(Integer)
+    # status: research | promoted | archived
+    status: Mapped[str] = mapped_column(String(20), default="research", index=True)
+    generation: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
+class ModelVersion(Base):
+    __tablename__ = "model_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    model_path: Mapped[str] = mapped_column(String(500))
+    feature_set_version: Mapped[str] = mapped_column(String(50))
+    train_start: Mapped[str] = mapped_column(String(20))
+    train_end: Mapped[str] = mapped_column(String(20))
+    metrics: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
