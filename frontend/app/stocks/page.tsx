@@ -51,7 +51,7 @@ export default async function StocksPage() {
                 {stocks.map((stock) => (
                   <tr key={stock.id} className="border-t border-slate-700 hover:bg-slate-700/40">
                     <td className="px-4 py-3">
-                      <Link href={`/stocks/${stock.ticker}`} className="font-mono text-blue-300 hover:underline">
+                      <Link href={`/stocks/${stock.ticker}`} prefetch={false} className="font-mono text-blue-300 hover:underline">
                         {stock.ticker}
                       </Link>
                     </td>

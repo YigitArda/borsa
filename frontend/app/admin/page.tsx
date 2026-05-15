@@ -78,7 +78,7 @@ export default async function AdminDashboard() {
       {failedJobs > 0 && (
         <div className="rounded-lg border border-red-700/40 bg-red-900/10 p-4 text-sm text-red-300">
           {failedJobs} job{failedJobs > 1 ? "s" : ""} failed recently. Check the{" "}
-          <Link href="/admin/jobs" className="text-red-400 hover:underline font-medium">Jobs page</Link>.
+          <Link href="/admin/jobs" prefetch={false} className="text-red-400 hover:underline font-medium">Jobs page</Link>.
         </div>
       )}
 
@@ -89,7 +89,7 @@ export default async function AdminDashboard() {
           { href: "/admin/users", label: "Users", desc: "User accounts and roles" },
           { href: "/admin/notifications", label: "Notifications", desc: "Alert and email settings" },
         ].map((card) => (
-          <Link key={card.href} href={card.href}>
+          <Link key={card.href} href={card.href} prefetch={false}>
             <div className="rounded-lg border border-slate-700 bg-slate-800 hover:border-blue-500 transition-colors p-5 cursor-pointer h-full">
               <div className="font-medium text-white">{card.label}</div>
               <div className="text-xs text-slate-400 mt-1">{card.desc}</div>
@@ -101,7 +101,7 @@ export default async function AdminDashboard() {
       <section>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-white">Recent Jobs</h2>
-          <Link href="/admin/jobs" className="text-sm text-blue-400 hover:underline">View all</Link>
+          <Link href="/admin/jobs" prefetch={false} className="text-sm text-blue-400 hover:underline">View all</Link>
         </div>
         {jobs.length === 0 ? (
           <div className="rounded-lg border border-slate-700 bg-slate-800 p-6 text-slate-400 text-sm">

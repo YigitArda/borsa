@@ -31,6 +31,29 @@ type StatusRow = {
   detail: string;
 };
 
+type DataQualityReport = {
+  stocks: Array<{
+    ticker: string;
+    name: string;
+    weekly_price_rows: number;
+    daily_price_rows: number;
+    feature_rows: number;
+    latest_week: string | null;
+    status: string;
+  }>;
+  macro_freshness: Record<string, string>;
+  data_quality_gates: {
+    pit_financial_rows: number;
+    yfinance_financial_rows: number;
+    universe_snapshot_count: number;
+    ticker_alias_count: number;
+    corporate_action_count: number;
+    warnings: string[];
+  };
+  total_stocks: number;
+  stocks_with_data: number;
+};
+
 type DataStatusSummary = {
   generated_at: string;
   stock_count: number;
@@ -64,8 +87,11 @@ function statusClasses(status: string) {
 }
 
 export default async function DataStatusPage() {
-  const { data, error } = await loadApi<DataStatusSummary>("/data-quality/summary");
-  const summary = data;
+  const summaryResult = await loadApi<DataStatusSummary>("/data-quality/summary");
+  const reportResult = summaryResult.data ? null : await loadApi<DataQualityReport>("/data-quality");
+  const summary = summaryResult.data;
+  const report = reportResult?.data;
+  const compatibilityMode = !summary && !!report;
   const generatedAt = summary ? new Date(summary.generated_at).toLocaleString("tr-TR") : null;
 
   return (
@@ -77,9 +103,16 @@ export default async function DataStatusPage() {
         </p>
       </div>
 
-      {error && (
+      {compatibilityMode && (
+        <div className="rounded-lg border border-yellow-700/40 bg-yellow-900/10 p-4 text-sm text-yellow-300">
+          Backend bu ortamda <code>/data-quality/summary</code> endpointini sunmuyor. Uyumluluk modu olarak
+          <code> /data-quality</code> raporu gösteriliyor.
+        </div>
+      )}
+
+      {summaryResult.error && !report && (
         <div className="rounded-lg border border-red-700/40 bg-red-900/10 p-4 text-sm text-red-300">
-          Veri özeti yüklenemedi: {error}
+          Veri özeti yüklenemedi: {summaryResult.error}
         </div>
       )}
 
@@ -163,6 +196,91 @@ export default async function DataStatusPage() {
             />
           </Section>
         </>
+      ) : report ? (
+        <>
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+            <StatCard label="Toplam Hisse" value={report.total_stocks} />
+            <StatCard label="Verisi Olan Hisse" value={report.stocks_with_data} />
+            <StatCard label="Eksik Hisse" value={Math.max(report.total_stocks - report.stocks_with_data, 0)} />
+            <StatCard label="Makro Gösterge" value={Object.keys(report.macro_freshness).length} />
+            <StatCard label="Uyarı Sayısı" value={report.data_quality_gates.warnings.length} />
+          </div>
+
+          <div className="rounded-lg border border-slate-700 bg-slate-800 p-4 text-sm text-slate-300">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-slate-500">Uyumluluk modu</div>
+                <div className="text-white font-medium">Legacy /data-quality report</div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wide text-slate-500">Hisse kapsama oranı</div>
+                <div className="text-white font-medium">
+                  {report.total_stocks > 0
+                    ? `${Math.round((report.stocks_with_data / report.total_stocks) * 100)}%`
+                    : "N/A"}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wide text-slate-500">Makro seri sayısı</div>
+                <div className="text-white font-medium">{Object.keys(report.macro_freshness).length}</div>
+              </div>
+            </div>
+          </div>
+
+          <Section title="Makro Veri Tazeliği">
+            <DataTable
+              headers={["Gösterge", "Son Güncelleme"]}
+              rows={Object.entries(report.macro_freshness).map(([code, value]) => [
+                <strong key={`${code}-name`}>{code}</strong>,
+                <span key={`${code}-value`} className="font-mono text-xs">{value}</span>,
+              ])}
+            />
+          </Section>
+
+          <Section title="Veri Kalitesi Kapıları">
+            <DataTable
+              headers={["Bileşen", "Değer"]}
+              rows={[
+                ["PIT finansal kayıtları", report.data_quality_gates.pit_financial_rows.toLocaleString()],
+                ["yfinance finansal kayıtları", report.data_quality_gates.yfinance_financial_rows.toLocaleString()],
+                ["Universe snapshot sayısı", report.data_quality_gates.universe_snapshot_count.toLocaleString()],
+                ["Ticker alias sayısı", report.data_quality_gates.ticker_alias_count.toLocaleString()],
+                ["Corporate action sayısı", report.data_quality_gates.corporate_action_count.toLocaleString()],
+              ].map(([label, value]) => [
+                <strong key={`${label}-name`}>{label}</strong>,
+                value,
+              ])}
+            />
+            <div className="border-t border-slate-700 p-4">
+              <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">Uyarılar</div>
+              {report.data_quality_gates.warnings.length > 0 ? (
+                <ul className="list-disc pl-5 space-y-1 text-slate-300 text-sm">
+                  {report.data_quality_gates.warnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-slate-400 text-sm">Uyarı yok.</div>
+              )}
+            </div>
+          </Section>
+
+          <Section title="Hisse Bazlı Veri Durumu">
+            <DataTable
+              headers={["Ticker", "Günlük", "Haftalık", "Feature", "Son Hafta", "Durum"]}
+              rows={report.stocks.map((row) => [
+                <strong key={`${row.ticker}-ticker`}>{row.ticker}</strong>,
+                row.daily_price_rows.toLocaleString(),
+                row.weekly_price_rows.toLocaleString(),
+                row.feature_rows.toLocaleString(),
+                row.latest_week ?? "—",
+                <Badge key={`${row.ticker}-status`} status={reportStockBadgeStatus(row.status)}>
+                  {reportStockLabel(row.status)}
+                </Badge>,
+              ])}
+            />
+          </Section>
+        </>
       ) : (
         <div className="rounded-lg border border-slate-700 bg-slate-800 p-6 text-sm text-slate-400">
           Veri özeti şu anda alınamadı. Backend tekrar çevrimiçi olduğunda bu sayfa otomatik olarak güncellenecek.
@@ -237,6 +355,18 @@ function StatCard({ label, value }: { label: string; value: number | string }) {
       </div>
     </div>
   );
+}
+
+function reportStockLabel(status: string) {
+  if (status === "ok") return "TAMAM";
+  if (status === "insufficient_data") return "EKSİK";
+  return status.toUpperCase();
+}
+
+function reportStockBadgeStatus(status: string) {
+  if (status === "ok") return "Aktif";
+  if (status === "insufficient_data") return "Pasif";
+  return "Kismi";
 }
 
 function Badge({

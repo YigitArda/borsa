@@ -87,7 +87,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         }}>
           {navLinks.map(l => (
             <Tooltip key={l.href} text={l.tip} position="bottom">
-              <Link href={l.href} style={{
+              <Link href={l.href} prefetch={false} style={{
                 padding: "2px 10px", fontSize: "11px",
                 fontFamily: "Tahoma,sans-serif", color: "#000",
                 textDecoration: "none", display: "block"
@@ -117,7 +117,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </div>
                 {section.links.map(link => (
                   <Tooltip key={link.href} text={link.tip || link.label} position="right">
-                    <Link href={link.href} style={{
+                    <Link href={link.href} prefetch={false} style={{
                       display: "block", padding: "3px 10px", fontSize: "11px",
                       fontFamily: "Tahoma,sans-serif", color: "#00008b",
                       textDecoration: "underline"
