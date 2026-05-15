@@ -92,6 +92,7 @@ export default function StrategyLab() {
   const [selectedTickers, setSelectedTickers] = useState<string[]>(SP500_TICKERS.slice(0, 10));
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>(ALL_FEATURE_OPTIONS.slice(0, 22));
   const [pipelineStatus, setPipelineStatus] = useState<string | null>(null);
+  const [promotedStatus, setPromotedStatus] = useState<string | null>(null);
   const [researchResult, setResearchResult] = useState<BacktestResult | null>(null);
   const [directResult, setDirectResult] = useState<DirectBacktestResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -173,8 +174,12 @@ export default function StrategyLab() {
   }
 
   async function loadPromotedStrategies() {
+    setPromotedStatus("Aday/Promoted stratejiler yukleniyor...");
     try {
       const res = await fetch(`${API}/strategies`);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
       const data: Array<{ id: number; name: string; status: string; notes: string }> = await res.json();
       const parsed = data.filter(s => ["candidate", "promoted"].includes(s.status)).map(s => {
         try {
@@ -185,7 +190,11 @@ export default function StrategyLab() {
         }
       });
       setPromotedStrategies(parsed);
-    } catch {}
+      setPromotedStatus(parsed.length > 0 ? `${parsed.length} strateji yüklendi` : "Uygun strateji bulunamadı");
+    } catch (error) {
+      setPromotedStrategies([]);
+      setPromotedStatus(error instanceof Error ? `Strateji yüklenemedi: ${error.message}` : "Strateji yüklenemedi");
+    }
   }
 
   const sectionStyle = {
@@ -437,6 +446,11 @@ export default function StrategyLab() {
               Aday/Promoted Stratejileri Yükle
             </button>
           </div>
+          {promotedStatus && (
+            <div style={{ marginTop: "8px", fontSize: "11px", color: promotedStatus.includes("yüklenemedi") ? "#cc0000" : "#336699" }}>
+              {promotedStatus}
+            </div>
+          )}
           {researchResult && (
             <div style={{ marginTop: "8px", fontSize: "11px" }}>
               Durum: <b>{researchResult.status}</b>

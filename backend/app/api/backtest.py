@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -209,7 +209,7 @@ async def run_cpcv_backtest(req: DirectBacktestRequest, db: AsyncSession = Depen
 async def get_backtest(run_id: int, db: AsyncSession = Depends(get_db)):
     run = await db.get(BacktestRun, run_id)
     if not run:
-        return {"error": "not found"}
+        raise HTTPException(404, "Backtest run not found")
     metrics = await db.execute(
         select(BacktestMetric).where(BacktestMetric.backtest_run_id == run_id)
     )
@@ -384,7 +384,7 @@ async def get_portfolio_simulation(
     """Get portfolio simulation summary."""
     sim = await db.get(PortfolioSimulation, simulation_id)
     if not sim:
-        return {"error": "not found"}
+        raise HTTPException(404, "Portfolio simulation not found")
 
     snapshots_result = await db.execute(
         select(PortfolioSnapshot)

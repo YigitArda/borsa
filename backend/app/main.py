@@ -18,6 +18,7 @@ from app.api.research import router as research_router
 from app.api.data_quality import router as dq_router
 from app.api.verification import router as verification_router
 from app.api.auth import router as auth_router
+from app.api.notifications import router as notifications_router
 from app.api.jobs import router as jobs_router
 from app.api.selected_stocks import router as selected_stocks_router
 from app.api.export import router as export_router
@@ -64,6 +65,7 @@ _WRITE_ROUTES = {
     "/backtest/",
     "/research/optimize",
     "/scientific/",
+    "/notifications/",
     "/api/v1/weekly-pipeline",
 }
 
@@ -93,6 +95,7 @@ _RATE_LIMITS = {
     "/weekly-picks/generate": 30,
     "/weekly-picks/paper/": 30,
     "/auth/": 30,
+    "/notifications/": 30,
     # Export endpoints
     "/export/": 10,
     # Read endpoints (default)
@@ -242,6 +245,7 @@ app.include_router(research_router)
 app.include_router(dq_router)
 app.include_router(verification_router)
 app.include_router(auth_router)
+app.include_router(notifications_router)
 app.include_router(jobs_router)
 app.include_router(selected_stocks_router)
 app.include_router(export_router)

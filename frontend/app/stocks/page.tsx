@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { loadApi } from "@/lib/server-api";
 
 interface StockSummary {
   id: number;
@@ -8,16 +8,9 @@ interface StockSummary {
   sector: string | null;
 }
 
-async function getStocks(): Promise<StockSummary[]> {
-  try {
-    return await api.get<StockSummary[]>("/stocks");
-  } catch {
-    return [];
-  }
-}
-
 export default async function StocksPage() {
-  const stocks = await getStocks();
+  const { data: stocksData, error } = await loadApi<StockSummary[]>("/stocks");
+  const stocks = stocksData ?? [];
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -28,6 +21,12 @@ export default async function StocksPage() {
         </p>
       </div>
 
+      {error && (
+        <div className="rounded-lg border border-red-700/40 bg-red-900/10 p-4 text-sm text-red-300">
+          Hisse listesi yüklenemedi: {error}
+        </div>
+      )}
+
       <div className="rounded-lg border border-slate-700 bg-slate-800 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
           <div className="text-sm text-slate-300">{stocks.length} aktif hisse</div>
@@ -36,7 +35,7 @@ export default async function StocksPage() {
 
         {stocks.length === 0 ? (
           <div className="p-6 text-slate-400 text-sm">
-            Aktif hisse bulunamadi. Veri senkronizasyonunu kontrol edin.
+            {error ? "Aktif hisse verisi şu anda alınamadı." : "Aktif hisse bulunamadi. Veri senkronizasyonunu kontrol edin."}
           </div>
         ) : (
           <div className="overflow-x-auto">

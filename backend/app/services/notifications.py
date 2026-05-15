@@ -6,19 +6,45 @@ operators can retry or debug later.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime
 from typing import Any
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_sessionmaker
-from app.models.notification import NotificationLog
+from app.models.notification import NotificationLog, NotificationPreference
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_GLOBAL_NOTIFICATION_SETTINGS: dict[str, Any] = {
+    "emailAlerts": True,
+    "slackWebhook": "",
+    "jobFailures": True,
+    "killSwitchTriggers": True,
+    "strategyPromotions": False,
+    "dailyDigest": False,
+}
+
+
+def _merge_global_notification_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
+    merged = dict(DEFAULT_GLOBAL_NOTIFICATION_SETTINGS)
+    if raw:
+        for key, value in raw.items():
+            if key in merged:
+                merged[key] = value
+    return merged
+
+
+async def _load_global_notification_settings(db: AsyncSession) -> dict[str, Any]:
+    result = await db.execute(
+        select(NotificationPreference).where(NotificationPreference.name == "global")
+    )
+    pref = result.scalar_one_or_none()
+    return _merge_global_notification_settings(pref.settings_json if pref else None)
 
 
 class NotificationService:
@@ -86,12 +112,21 @@ class NotificationService:
             logger.exception("Failed to send email to %s", to)
             return {"status": "failed", "error": str(exc)}
 
-    async def send_slack(self, *, message: str, webhook_url: str | None = None) -> dict[str, Any]:
+    async def send_slack(
+        self,
+        *,
+        message: str,
+        webhook_url: str | None = None,
+        db: AsyncSession | None = None,
+    ) -> dict[str, Any]:
         """Post a plain-text message to a Slack incoming webhook.
 
         Returns a dict with ``status`` ("sent" | "failed") and optional ``error``.
         """
         url = webhook_url or settings.slack_webhook_url
+        if not url and db is not None:
+            prefs = await _load_global_notification_settings(db)
+            url = str(prefs.get("slackWebhook") or "")
         if not url:
             return {"status": "failed", "error": "Slack webhook URL not configured"}
 
@@ -151,6 +186,19 @@ class NotificationService:
     # High-level dispatcher
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _event_allowed_by_preferences(event_type: str, prefs: dict[str, Any]) -> bool:
+        event = event_type.lower()
+        if any(token in event for token in ("fail", "error", "job", "pipeline")) and not prefs.get("jobFailures", True):
+            return False
+        if "kill" in event and not prefs.get("killSwitchTriggers", True):
+            return False
+        if "promot" in event and not prefs.get("strategyPromotions", True):
+            return False
+        if "digest" in event and not prefs.get("dailyDigest", True):
+            return False
+        return True
+
     async def notify(
         self,
         event_type: str,
@@ -209,6 +257,13 @@ class NotificationService:
             db.add(log)
 
         try:
+            prefs = await _load_global_notification_settings(db)
+            if not self._event_allowed_by_preferences(event_type, prefs):
+                return [{"channel": "dispatch", "status": "skipped", "reason": "disabled by preferences"}]
+
+            if not prefs.get("emailAlerts", True):
+                channels = [channel for channel in channels if channel != "email"]
+
             if "email" in channels:
                 email_result = await self.send_email(
                     to=data.get("to", ""),
@@ -231,11 +286,12 @@ class NotificationService:
                 slack_result = await self.send_slack(
                     message=data.get("message", ""),
                     webhook_url=data.get("webhook_url"),
+                    db=db,
                 )
                 await _audit(
                     "slack",
                     slack_result,
-                    recipient=settings.slack_webhook_url,
+                    recipient=str(data.get("webhook_url") or prefs.get("slackWebhook") or settings.slack_webhook_url or ""),
                     subject=data.get("message", "")[:200],
                 )
                 results.append({"channel": "slack", **slack_result})

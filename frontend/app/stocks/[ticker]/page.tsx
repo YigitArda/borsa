@@ -1,6 +1,6 @@
-import { api } from "@/lib/api";
 import PriceChart from "@/components/charts/PriceChart";
 import ReturnDistributionChart from "@/components/charts/ReturnDistributionChart";
+import { loadApi } from "@/lib/server-api";
 
 interface SocialRow {
   week_ending: string;
@@ -58,20 +58,8 @@ interface PriceRow {
   realized_volatility: number | null;
 }
 
-async function getResearch(ticker: string): Promise<StockResearch | null> {
-  try { return await api.get<StockResearch>(`/stocks/${ticker}/research`); } catch { return null; }
-}
-
-async function getPrices(ticker: string): Promise<PriceRow[]> {
-  try { return await api.get<PriceRow[]>(`/stocks/${ticker}/prices?limit=104`); } catch { return []; }
-}
-
-async function getGoodWeekFeatures(ticker: string): Promise<GoodWeekFeatures | null> {
-  try { return await api.get<GoodWeekFeatures>(`/stocks/${ticker}/good-week-features`); } catch { return null; }
-}
-
 function fmt(v: number | null | undefined, pct = false, decimals = 2): string {
-  if (v == null) return "—";
+  if (v == null) return "-";
   return pct ? `${(v * 100).toFixed(decimals)}%` : v.toFixed(decimals);
 }
 
@@ -81,20 +69,40 @@ function sentimentColor(label: string | null) {
   return "text-slate-400";
 }
 
+function MetricCard({ label, value, color }: { label: string; value: string | number; color?: string }) {
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
+      <div className="text-xs text-slate-400">{label}</div>
+      <div className={`text-xl font-bold mt-1 ${color || "text-white"}`}>{value}</div>
+    </div>
+  );
+}
+
 export default async function StockPage({ params }: { params: { ticker: string } }) {
   const ticker = params.ticker.toUpperCase();
-  const [research, prices, goodWeekFeatures] = await Promise.all([
-    getResearch(ticker),
-    getPrices(ticker),
-    getGoodWeekFeatures(ticker),
+
+  const [researchResult, pricesResult, goodWeekResult] = await Promise.all([
+    loadApi<StockResearch>(`/stocks/${ticker}/research`),
+    loadApi<PriceRow[]>(`/stocks/${ticker}/prices?limit=104`),
+    loadApi<GoodWeekFeatures>(`/stocks/${ticker}/good-week-features`),
   ]);
 
+  const research = researchResult.data;
+  const prices = pricesResult.data ?? [];
+  const goodWeekFeatures = goodWeekResult.data;
+  const auxErrors = [pricesResult.error, goodWeekResult.error].filter(Boolean) as string[];
+
   if (!research) {
-    return <div className="text-slate-400 p-8">Stock not found: {ticker}</div>;
+    return (
+      <div className="max-w-6xl mx-auto space-y-4">
+        <div className="rounded-lg border border-red-700/40 bg-red-900/10 p-4 text-sm text-red-300">
+          {researchResult.error || `Stock not found: ${ticker}`}
+        </div>
+      </div>
+    );
   }
 
   const r = research.risk;
-
   const technicalItems = [
     { label: "RSI (14)", key: "rsi_14", pct: false },
     { label: "MACD Hist", key: "macd_hist", pct: false },
@@ -131,37 +139,31 @@ export default async function StockPage({ params }: { params: { ticker: string }
     { label: "Market Cap", key: "market_cap" },
   ];
 
-  const topGoodWeekFeatures = goodWeekFeatures
-    ? Object.entries(goodWeekFeatures.features).slice(0, 12)
-    : [];
+  const topGoodWeekFeatures = goodWeekFeatures ? Object.entries(goodWeekFeatures.features).slice(0, 12) : [];
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
-      {/* Header */}
       <div>
         <h1 className="text-3xl font-bold text-white">{ticker}</h1>
         <p className="text-slate-400 mt-1">{research.name} · {research.sector} · {research.industry}</p>
       </div>
 
-      {/* Risk metrics row */}
+      {auxErrors.length > 0 && (
+        <div className="rounded-lg border border-yellow-700/40 bg-yellow-900/10 p-4 text-sm text-yellow-300">
+          {auxErrors.join(" · ")}
+        </div>
+      )}
+
       <div className="grid grid-cols-4 gap-4">
-        {[
-          { label: "Win Rate", value: fmt(r.win_rate, true), color: r.win_rate > 0.5 ? "text-green-400" : "text-slate-300" },
-          { label: "Avg Weekly Return", value: fmt(r.avg_weekly_return, true), color: (r.avg_weekly_return || 0) > 0 ? "text-green-400" : "text-red-400" },
-          { label: "Annualized Sharpe", value: fmt(r.annualized_sharpe), color: (r.annualized_sharpe || 0) > 0.5 ? "text-green-400" : "text-yellow-400" },
-          { label: "Max Drawdown", value: fmt(r.max_drawdown, true), color: "text-red-400" },
-          { label: "Weekly Vol", value: fmt(r.weekly_volatility, true), color: "text-slate-300" },
-          { label: "Skewness", value: fmt(r.skewness), color: "text-slate-300" },
-          { label: "Total Weeks", value: r.total_weeks?.toString(), color: "text-slate-300" },
-        ].map(({ label, value, color }) => (
-          <div key={label} className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-            <div className="text-xs text-slate-400">{label}</div>
-            <div className={`text-xl font-bold mt-1 ${color}`}>{value}</div>
-          </div>
-        ))}
+        <MetricCard label="Win Rate" value={fmt(r.win_rate, true)} color={r.win_rate > 0.5 ? "text-green-400" : "text-slate-300"} />
+        <MetricCard label="Avg Weekly Return" value={fmt(r.avg_weekly_return, true)} color={(r.avg_weekly_return || 0) > 0 ? "text-green-400" : "text-red-400"} />
+        <MetricCard label="Annualized Sharpe" value={fmt(r.annualized_sharpe)} color={(r.annualized_sharpe || 0) > 0.5 ? "text-green-400" : "text-yellow-400"} />
+        <MetricCard label="Max Drawdown" value={fmt(r.max_drawdown, true)} color="text-red-400" />
+        <MetricCard label="Weekly Vol" value={fmt(r.weekly_volatility, true)} />
+        <MetricCard label="Skewness" value={fmt(r.skewness)} />
+        <MetricCard label="Total Weeks" value={r.total_weeks?.toString() ?? "-"} />
       </div>
 
-      {/* Price chart */}
       {prices.length > 0 && (
         <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
           <h2 className="text-lg font-semibold text-white mb-4">Price History (2 Years)</h2>
@@ -169,7 +171,6 @@ export default async function StockPage({ params }: { params: { ticker: string }
         </div>
       )}
 
-      {/* Return distribution */}
       {research.distribution.length > 0 && (
         <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
           <h2 className="text-lg font-semibold text-white mb-4">Weekly Return Distribution</h2>
@@ -177,7 +178,6 @@ export default async function StockPage({ params }: { params: { ticker: string }
         </div>
       )}
 
-      {/* Best / Worst weeks */}
       <div className="grid grid-cols-2 gap-6">
         <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
           <h2 className="text-base font-semibold text-green-400 mb-3">Top 10 Best Weeks</h2>
@@ -210,10 +210,9 @@ export default async function StockPage({ params }: { params: { ticker: string }
         </div>
       </div>
 
-      {/* Common features in good weeks */}
       {topGoodWeekFeatures.length > 0 && goodWeekFeatures && (
         <div className="rounded-lg border border-teal-700/40 bg-teal-900/10 p-4">
-          <h2 className="text-lg font-semibold text-teal-300 mb-1">Common Features in Good Entry Weeks (≥2%)</h2>
+          <h2 className="text-lg font-semibold text-teal-300 mb-1">Common Features in Good Entry Weeks (&gt;=2%)</h2>
           <p className="text-xs text-slate-400 mb-4">
             Top features that differ most between winning weeks ({goodWeekFeatures.n_good}) and losing weeks ({goodWeekFeatures.n_bad}).
           </p>
@@ -231,10 +230,10 @@ export default async function StockPage({ params }: { params: { ticker: string }
                 {topGoodWeekFeatures.map(([fname, vals]) => (
                   <tr key={fname} className="border-b border-slate-800">
                     <td className="py-1.5 pr-4 font-mono text-teal-400">{fname}</td>
-                    <td className="text-right py-1.5 pr-4">{vals.good_avg?.toFixed(3) ?? "—"}</td>
-                    <td className="text-right py-1.5 pr-4">{vals.bad_avg?.toFixed(3) ?? "—"}</td>
+                    <td className="text-right py-1.5 pr-4">{vals.good_avg?.toFixed(3) ?? "-"}</td>
+                    <td className="text-right py-1.5 pr-4">{vals.bad_avg?.toFixed(3) ?? "-"}</td>
                     <td className={`text-right py-1.5 font-mono ${(vals.diff ?? 0) > 0 ? "text-green-400" : "text-red-400"}`}>
-                      {vals.diff != null ? (vals.diff > 0 ? "+" : "") + vals.diff.toFixed(3) : "—"}
+                      {vals.diff != null ? (vals.diff > 0 ? "+" : "") + vals.diff.toFixed(3) : "-"}
                     </td>
                   </tr>
                 ))}
@@ -244,7 +243,6 @@ export default async function StockPage({ params }: { params: { ticker: string }
         </div>
       )}
 
-      {/* Technical indicators */}
       <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
         <h2 className="text-lg font-semibold text-white mb-4">Latest Technical Indicators</h2>
         <div className="grid grid-cols-5 gap-3">
@@ -260,7 +258,6 @@ export default async function StockPage({ params }: { params: { ticker: string }
         </div>
       </div>
 
-      {/* Financial metrics */}
       <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
         <h2 className="text-lg font-semibold text-white mb-4">Financial Metrics</h2>
         <div className="grid grid-cols-5 gap-3">
@@ -276,7 +273,6 @@ export default async function StockPage({ params }: { params: { ticker: string }
         </div>
       </div>
 
-      {/* Signal history */}
       {research.signals.length > 0 && (
         <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
           <h2 className="text-lg font-semibold text-white mb-4">Signal History (Last 12 Weeks)</h2>
@@ -293,7 +289,7 @@ export default async function StockPage({ params }: { params: { ticker: string }
                   </div>
                   <span className="text-xs font-mono text-blue-400 w-12">{fmt(s.prob_2pct, true, 1)}</span>
                   {s.prob_loss_2pct != null && (
-                    <span className="text-xs font-mono text-red-400 w-12">↓{fmt(s.prob_loss_2pct, true, 1)}</span>
+                    <span className="text-xs font-mono text-red-400 w-12">v{fmt(s.prob_loss_2pct, true, 1)}</span>
                   )}
                   {s.expected_return != null && (
                     <span className={`text-xs font-mono w-14 ${s.expected_return > 0 ? "text-green-400" : "text-red-400"}`}>
@@ -304,7 +300,7 @@ export default async function StockPage({ params }: { params: { ticker: string }
                     s.confidence === "high" ? "bg-green-700 text-green-200" :
                     s.confidence === "medium" ? "bg-yellow-700 text-yellow-200" :
                     "bg-slate-700 text-slate-300"
-                  }`}>{s.confidence ?? "—"}</span>
+                  }`}>{s.confidence ?? "-"}</span>
                   {s.rank != null && <span className="text-xs text-slate-500">#{s.rank}</span>}
                 </div>
                 {s.signal_summary && (
@@ -316,25 +312,24 @@ export default async function StockPage({ params }: { params: { ticker: string }
         </div>
       )}
 
-      {/* Behavioral Signals */}
       {Object.keys(research.behavioral ?? {}).length > 0 && (
         <div className="rounded-lg border border-purple-700/40 bg-purple-900/10 p-4">
           <h2 className="text-lg font-semibold text-purple-300 mb-1">Behavioral Finance Signals</h2>
-          <p className="text-xs text-slate-400 mb-4">Anchoring, disposition, herding & overreaction indicators (latest week)</p>
+          <p className="text-xs text-slate-400 mb-4">Anchoring, disposition, herding and overreaction indicators (latest week)</p>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {[
               { key: "anchor_proximity_high", label: "52w High Proximity", pct: true },
-              { key: "anchor_proximity_low",  label: "52w Low Proximity",  pct: true },
-              { key: "anchor_breakout_signal", label: "Breakout Signal",   pct: false },
-              { key: "disposition_gain_proxy", label: "Gain Proxy",        pct: true },
-              { key: "disposition_selling_risk", label: "Selling Risk",    pct: false },
-              { key: "herding_score",          label: "Herding Score",     pct: true },
-              { key: "overreaction_reversal",  label: "Overreaction Rev.", pct: true },
-              { key: "extreme_move_flag",      label: "Extreme Move",      pct: false },
-              { key: "ngram_bullish_score",    label: "N-gram Bullish",    pct: true },
-              { key: "ngram_bearish_score",    label: "N-gram Bearish",    pct: true },
-              { key: "erm_score",              label: "EPS Revision Mom.", pct: true },
-              { key: "forward_pe_change",      label: "Fwd PE Change",     pct: false },
+              { key: "anchor_proximity_low", label: "52w Low Proximity", pct: true },
+              { key: "anchor_breakout_signal", label: "Breakout Signal", pct: false },
+              { key: "disposition_gain_proxy", label: "Gain Proxy", pct: true },
+              { key: "disposition_selling_risk", label: "Selling Risk", pct: false },
+              { key: "herding_score", label: "Herding Score", pct: true },
+              { key: "overreaction_reversal", label: "Overreaction Rev.", pct: true },
+              { key: "extreme_move_flag", label: "Extreme Move", pct: false },
+              { key: "ngram_bullish_score", label: "N-gram Bullish", pct: true },
+              { key: "ngram_bearish_score", label: "N-gram Bearish", pct: true },
+              { key: "erm_score", label: "EPS Revision Mom.", pct: true },
+              { key: "forward_pe_change", label: "Fwd PE Change", pct: false },
             ].map(({ key, label, pct }) => {
               const val = (research.behavioral ?? {})[key];
               if (val == null) return null;
@@ -355,7 +350,6 @@ export default async function StockPage({ params }: { params: { ticker: string }
         </div>
       )}
 
-      {/* Social Sentiment */}
       {(research.social ?? []).length > 0 && (
         <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
           <h2 className="text-lg font-semibold text-white mb-4">Social Sentiment (Last 12 Weeks)</h2>
@@ -375,18 +369,18 @@ export default async function StockPage({ params }: { params: { ticker: string }
                 {(research.social ?? []).map((s) => (
                   <tr key={s.week_ending} className="border-b border-slate-800 hover:bg-slate-700/30">
                     <td className="py-1.5 pr-3 font-mono text-slate-400">{s.week_ending?.slice(0, 10)}</td>
-                    <td className="text-right py-1.5 pr-3">{s.mention_count ?? "—"}</td>
+                    <td className="text-right py-1.5 pr-3">{s.mention_count ?? "-"}</td>
                     <td className={`text-right py-1.5 pr-3 font-mono ${
                       (s.sentiment_polarity ?? 0) > 0.1 ? "text-green-400" :
                       (s.sentiment_polarity ?? 0) < -0.1 ? "text-red-400" : "text-slate-400"
-                    }`}>{s.sentiment_polarity?.toFixed(3) ?? "—"}</td>
+                    }`}>{s.sentiment_polarity?.toFixed(3) ?? "-"}</td>
                     <td className={`text-right py-1.5 pr-3 font-mono ${
                       (s.mention_momentum ?? 0) > 0 ? "text-green-400" : "text-red-400"
-                    }`}>{s.mention_momentum?.toFixed(2) ?? "—"}</td>
+                    }`}>{s.mention_momentum?.toFixed(2) ?? "-"}</td>
                     <td className={`text-right py-1.5 pr-3 ${
                       (s.hype_risk ?? 0) > 0.7 ? "text-orange-400 font-semibold" : "text-slate-300"
-                    }`}>{s.hype_risk?.toFixed(2) ?? "—"}</td>
-                    <td className="text-right py-1.5 font-mono">{s.abnormal_attention?.toFixed(2) ?? "—"}</td>
+                    }`}>{s.hype_risk?.toFixed(2) ?? "-"}</td>
+                    <td className="text-right py-1.5 font-mono">{s.abnormal_attention?.toFixed(2) ?? "-"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -395,7 +389,6 @@ export default async function StockPage({ params }: { params: { ticker: string }
         </div>
       )}
 
-      {/* News */}
       {research.news.length > 0 && (
         <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
           <h2 className="text-lg font-semibold text-white mb-4">Recent News</h2>

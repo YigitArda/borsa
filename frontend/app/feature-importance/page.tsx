@@ -1,4 +1,4 @@
-import { api } from "@/lib/api";
+import { loadApi } from "@/lib/server-api";
 
 interface Strategy {
   id: number;
@@ -12,17 +12,16 @@ interface ImportanceData {
   shap_importance: Record<string, number>;
 }
 
-async function getStrategies(): Promise<Strategy[]> {
-  try {
-    const promoted = await api.get<Strategy[]>("/strategies?status=promoted");
-    if (promoted.length > 0) return promoted;
-    // Fall back to all strategies if none are promoted yet
-    return await api.get<Strategy[]>("/strategies?limit=5");
-  } catch { return []; }
-}
-
-async function getImportance(id: number): Promise<ImportanceData | null> {
-  try { return await api.get<ImportanceData>(`/research/feature-importance/${id}`); } catch { return null; }
+async function loadStrategies() {
+  const promoted = await loadApi<Strategy[]>("/strategies?status=promoted");
+  if ((promoted.data ?? []).length > 0) {
+    return promoted;
+  }
+  const fallback = await loadApi<Strategy[]>("/strategies?limit=5");
+  return {
+    data: fallback.data ?? promoted.data ?? [],
+    error: promoted.error ?? fallback.error,
+  };
 }
 
 function ImportanceTable({ data, title }: { data: Record<string, number>; title: string }) {
@@ -40,7 +39,7 @@ function ImportanceTable({ data, title }: { data: Record<string, number>; title:
               <th style={{ width: "24px" }}>#</th>
               <th>Feature</th>
               <th style={{ width: "120px" }}>Bar</th>
-              <th style={{ width: "60px", textAlign: "right" }}>Skor</th>
+              <th style={{ width: "60px", textAlign: "right" }}>Score</th>
             </tr>
           </thead>
           <tbody>
@@ -75,11 +74,20 @@ function ImportanceTable({ data, title }: { data: Record<string, number>; title:
 }
 
 export default async function FeatureImportancePage() {
-  const strategies = await getStrategies();
+  const strategiesResult = await loadStrategies();
+  const strategies = strategiesResult.data ?? [];
 
   const importances = await Promise.all(
-    strategies.map(async (s) => ({ strategy: s, data: await getImportance(s.id) }))
+    strategies.map(async (strategy) => {
+      const result = await loadApi<ImportanceData>(`/research/feature-importance/${strategy.id}`);
+      return { strategy, ...result };
+    })
   );
+
+  const errors = [
+    strategiesResult.error,
+    ...importances.map(({ error }) => error),
+  ].filter(Boolean) as string[];
 
   const hasData = importances.some(
     ({ data }) =>
@@ -93,22 +101,28 @@ export default async function FeatureImportancePage() {
       <h1>Feature Importance</h1>
 
       <div className="alert alert-info">
-        Model ve SHAP tabanlı feature importance skorları. SHAP, walk-forward fold ortalamasıdır.
+        Model ve SHAP tabanli feature importance skorlar. SHAP, walk-forward fold ortalamasidir.
       </div>
+
+      {errors.length > 0 && (
+        <div className="alert alert-warning">
+          Some feature importance data could not be loaded: {errors.join(" · ")}
+        </div>
+      )}
 
       {strategies.length === 0 && (
         <div className="alert alert-warning">
-          Henüz strateji bulunamadı.
+          Henuz strateji bulunamadi.
         </div>
       )}
 
       {strategies.length > 0 && !hasData && (
         <div className="alert alert-warning">
-          Stratejiler var fakat feature importance verisi yok. Model eğitimi sonrasında burada görünecek.
+          Stratejiler var fakat feature importance verisi yok. Model egitimi sonrasinda burada gorunecek.
         </div>
       )}
 
-      {importances.map(({ strategy, data }) => {
+      {importances.map(({ strategy, data, error }) => {
         if (!data) return null;
         const hasFI = Object.keys(data.feature_importance).length > 0;
         const hasSHAP = Object.keys(data.shap_importance).length > 0;
@@ -121,23 +135,29 @@ export default async function FeatureImportancePage() {
               color: "white", padding: "4px 8px", fontSize: "12px", fontWeight: "bold",
               display: "flex", justifyContent: "space-between", alignItems: "center",
             }}>
-              <span>Strateji #{strategy.id} — {strategy.name}</span>
+              <span>Strateji #{strategy.id} - {strategy.name}</span>
               <span className={`badge ${strategy.status === "promoted" ? "badge-success" : "badge-info"}`}>
                 {strategy.status.toUpperCase()}
               </span>
             </div>
 
+            {error && (
+              <div className="alert alert-warning" style={{ marginTop: "8px" }}>
+                {error}
+              </div>
+            )}
+
             <div style={{ padding: "8px 0" }}>
               {hasSHAP && (
                 <ImportanceTable
                   data={data.shap_importance}
-                  title="SHAP Importance (Walk-Forward Fold Ortalaması)"
+                  title="SHAP Importance (Walk-Forward Fold Average)"
                 />
               )}
               {hasFI && (
                 <ImportanceTable
                   data={data.feature_importance}
-                  title="Model Feature Importance (Son Model Run)"
+                  title="Model Feature Importance (Last Model Run)"
                 />
               )}
             </div>
@@ -150,7 +170,7 @@ export default async function FeatureImportancePage() {
         border: "1px solid #c0c0c0", fontSize: "10px",
         fontFamily: "Tahoma,sans-serif", color: "#666", marginTop: "8px"
       }}>
-        Bu sistem yalnızca araştırma amaçlıdır, yatırım tavsiyesi değildir
+        Bu sistem yalnizca arastirma amaclidir, yatirim tavsiyesi degildir
       </div>
     </div>
   );

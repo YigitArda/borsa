@@ -1,19 +1,54 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`);
+async function readError(res: Response, path: string): Promise<string> {
+  const text = await res.text();
+  if (!text) {
+    return `API error ${res.status}: ${path}`;
+  }
+
+  try {
+    const data = JSON.parse(text) as { detail?: unknown; message?: unknown };
+    if (typeof data.detail === "string" && data.detail.trim()) {
+      return data.detail;
+    }
+    if (typeof data.message === "string" && data.message.trim()) {
+      return data.message;
+    }
+  } catch {
+    // Fall back to raw text below.
+  }
+
+  return text || `API error ${res.status}: ${path}`;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    cache: "no-store",
+    headers: init?.headers,
+  });
+  if (!res.ok) throw new Error(await readError(res, path));
   return res.json();
 }
 
+async function get<T>(path: string): Promise<T> {
+  return request<T>(path);
+}
+
 async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  return request<T>(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`);
-  return res.json();
+}
+
+async function put<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
 }
 
 type ResearchStartRequest = {
@@ -82,6 +117,21 @@ export const weeklyPicks = {
 export const dataQuality = {
   report: () => get<any>("/data-quality"),
   scores: () => get<any>("/data-quality/scores"),
+  summary: () => get<any>("/data-quality/summary"),
+};
+
+export type NotificationSettings = {
+  emailAlerts: boolean;
+  slackWebhook: string;
+  jobFailures: boolean;
+  killSwitchTriggers: boolean;
+  strategyPromotions: boolean;
+  dailyDigest: boolean;
+};
+
+export const notifications = {
+  getSettings: () => get<NotificationSettings>("/notifications/settings"),
+  saveSettings: (settings: NotificationSettings) => put<NotificationSettings>("/notifications/settings", settings),
 };
 
 // Jobs
@@ -98,4 +148,4 @@ export const verification = {
 };
 
 // Legacy generic API
-export const api = { get, post };
+export const api = { get, post, put };

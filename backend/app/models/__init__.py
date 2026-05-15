@@ -16,6 +16,7 @@ from app.models.regime import MarketRegime
 from app.models.kill_switch import KillSwitchEvent, KillSwitchConfig
 from app.models.model_run import ModelRun, StrategyRule, SelectedStock
 from app.models.user import User, ApiKey
+from app.models.notification import NotificationLog, NotificationSetting, NotificationPreference
 from app.models.mutation_memory import MutationMemory
 from app.models.hyperparam_trial import HyperparamTrial
 from app.models.meta_learner_data import MetaLearnerTrainingData
@@ -44,6 +45,7 @@ __all__ = [
     "KillSwitchEvent", "KillSwitchConfig",
     "ModelRun", "StrategyRule", "SelectedStock",
     "User", "ApiKey",
+    "NotificationLog", "NotificationSetting", "NotificationPreference",
     "MutationMemory",
     "HyperparamTrial",
     "MetaLearnerTrainingData",

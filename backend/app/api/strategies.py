@@ -98,7 +98,7 @@ def _sync_promotion_gate():
 async def get_strategy(strategy_id: int, db: AsyncSession = Depends(get_db)):
     strategy = await db.get(Strategy, strategy_id)
     if not strategy:
-        return {"error": "not found"}
+        raise HTTPException(404, "Strategy not found")
     return {
         "id": strategy.id,
         "name": strategy.name,

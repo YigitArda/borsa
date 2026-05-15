@@ -1,5 +1,5 @@
-import { api } from "@/lib/api";
 import EquityChart from "@/components/charts/EquityChart";
+import { loadApi } from "@/lib/server-api";
 
 interface BacktestDetail {
   id: number;
@@ -10,10 +10,6 @@ interface BacktestDetail {
   test_start: string;
   test_end: string;
   metrics: Record<string, number>;
-}
-
-async function getBacktest(id: string): Promise<BacktestDetail | null> {
-  try { return await api.get<BacktestDetail>(`/backtest/${id}`); } catch { return null; }
 }
 
 function MetricCard({ label, value, good }: { label: string; value: string; good?: boolean }) {
@@ -28,16 +24,25 @@ function MetricCard({ label, value, good }: { label: string; value: string; good
 }
 
 function pct(v: number | undefined) {
-  return v != null ? `${(v * 100).toFixed(2)}%` : "—";
+  return v != null ? `${(v * 100).toFixed(2)}%` : "-";
 }
 
 function num(v: number | undefined, decimals = 2) {
-  return v != null ? v.toFixed(decimals) : "—";
+  return v != null ? v.toFixed(decimals) : "-";
 }
 
 export default async function BacktestResultPage({ params }: { params: { id: string } }) {
-  const bt = await getBacktest(params.id);
-  if (!bt) return <div className="p-8 text-slate-400">Backtest not found.</div>;
+  const { data: bt, error } = await loadApi<BacktestDetail>(`/backtest/${params.id}`);
+
+  if (!bt) {
+    return (
+      <div className="max-w-5xl mx-auto space-y-4">
+        <div className="rounded-lg border border-red-700/40 bg-red-900/10 p-4 text-sm text-red-300">
+          {error || "Backtest not found."}
+        </div>
+      </div>
+    );
+  }
 
   const m = bt.metrics;
 
@@ -49,6 +54,12 @@ export default async function BacktestResultPage({ params }: { params: { id: str
           Strategy #{bt.strategy_id} · Test: {bt.test_start} → {bt.test_end}
         </p>
       </div>
+
+      {error && (
+        <div className="rounded-lg border border-yellow-700/40 bg-yellow-900/10 p-4 text-sm text-yellow-300">
+          {error}
+        </div>
+      )}
 
       <div className="grid grid-cols-4 gap-4">
         <MetricCard label="Sharpe" value={num(m.sharpe)} good={(m.sharpe ?? 0) > 0.5} />
@@ -62,7 +73,7 @@ export default async function BacktestResultPage({ params }: { params: { id: str
         <MetricCard label="Precision" value={pct(m.precision)} />
         <MetricCard label="Recall" value={pct(m.recall)} />
         <MetricCard label="F1" value={pct(m.f1)} />
-        <MetricCard label="Total Trades" value={String(m.n_trades ?? "—")} />
+        <MetricCard label="Total Trades" value={String(m.n_trades ?? "-")} />
       </div>
 
       <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">

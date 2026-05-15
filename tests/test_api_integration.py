@@ -59,6 +59,15 @@ class TestDataQualityEndpoints:
         response = client.get("/data-quality/scores")
         assert response.status_code == 200
 
+    def test_data_quality_summary(self, client: TestClient) -> None:
+        response = client.get("/data-quality/summary")
+        assert response.status_code == 200
+        data = response.json()
+        assert "stock_count" in data
+        assert "data_sources" in data
+        assert "system_status" in data
+        assert "feature_coverage" in data
+
 
 class TestResearchEndpoints:
     def test_risk_warnings(self, client: TestClient) -> None:
@@ -105,6 +114,10 @@ class TestStrategiesEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
+
+    def test_missing_strategy_returns_404(self, client: TestClient) -> None:
+        response = client.get("/strategies/999999")
+        assert response.status_code == 404
 
 
 class TestJobsEndpoints:
@@ -197,3 +210,41 @@ class TestErrorHandling:
             headers={"Content-Type": "application/json"},
         )
         assert response.status_code == 422
+
+
+class TestNotificationsEndpoints:
+    def test_get_notification_settings(self, client: TestClient) -> None:
+        response = client.get("/notifications/settings")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["emailAlerts"] is True
+        assert "slackWebhook" in data
+
+    def test_update_notification_settings(self, client: TestClient) -> None:
+        payload = {
+            "emailAlerts": False,
+            "slackWebhook": "https://hooks.slack.com/services/test",
+            "jobFailures": False,
+            "killSwitchTriggers": False,
+            "strategyPromotions": True,
+            "dailyDigest": True,
+        }
+        response = client.put("/notifications/settings", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["emailAlerts"] is False
+        assert data["strategyPromotions"] is True
+
+        get_response = client.get("/notifications/settings")
+        assert get_response.status_code == 200
+        assert get_response.json()["slackWebhook"] == payload["slackWebhook"]
+
+
+class Test404Coverage:
+    def test_missing_backtest_returns_404(self, client: TestClient) -> None:
+        response = client.get("/backtest/999999")
+        assert response.status_code == 404
+
+    def test_missing_stock_quality_score_returns_404(self, client: TestClient) -> None:
+        response = client.get("/data-quality/scores/NOPE")
+        assert response.status_code == 404

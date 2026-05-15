@@ -1,5 +1,7 @@
 from datetime import datetime
-from sqlalchemy import String, DateTime, Integer, Text, Boolean, func, ForeignKey
+from typing import Any
+
+from sqlalchemy import String, DateTime, Integer, Text, Boolean, func, ForeignKey, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -42,3 +44,15 @@ class NotificationSetting(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     user: Mapped["User"] = relationship("User", lazy="selectin")
+
+
+class NotificationPreference(Base):
+    """Global notification settings shared across the server."""
+
+    __tablename__ = "notification_preferences"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+    settings_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

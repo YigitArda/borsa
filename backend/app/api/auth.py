@@ -47,6 +47,16 @@ class UserResponse(BaseModel):
     created_at: str
 
 
+def _get_jwt_secret() -> str:
+    secret = settings.jwt_secret
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="JWT_SECRET must be configured",
+        )
+    return secret
+
+
 # ------------------------------------------------------------------
 # Dependencies
 # ------------------------------------------------------------------
@@ -61,8 +71,7 @@ async def get_current_user(
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token format")
 
-    secret = getattr(settings, "jwt_secret", None) or getattr(settings, "secret_key", None) or "borsa-dev-secret-change-me"
-    payload = AuthService.verify_access_token(token, secret)
+    payload = AuthService.verify_access_token(token, _get_jwt_secret())
     if payload is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
 
@@ -97,10 +106,9 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    secret = getattr(settings, "jwt_secret", None) or getattr(settings, "secret_key", None) or "borsa-dev-secret-change-me"
     token = AuthService.create_access_token(
         data={"sub": str(user.id), "email": user.email, "role": user.role},
-        secret=secret,
+        secret=_get_jwt_secret(),
         expires_delta=None,  # default 30 min
     )
     return {"access_token": token, "token_type": "bearer"}

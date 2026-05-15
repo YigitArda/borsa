@@ -1,5 +1,5 @@
-import { api } from "@/lib/api";
 import Link from "next/link";
+import { loadApi } from "@/lib/server-api";
 
 interface User {
   id: number;
@@ -31,29 +31,19 @@ interface KillSwitchConfig {
   max_vix_level: number;
 }
 
-async function getUsers(): Promise<User[]> {
-  try { return await api.get<User[]>("/admin/users"); } catch { return []; }
-}
-
-async function getJobs(): Promise<JobRun[]> {
-  try { return await api.get<JobRun[]>("/admin/jobs?limit=5"); } catch { return []; }
-}
-
-async function getStrategies(): Promise<Strategy[]> {
-  try { return await api.get<Strategy[]>("/strategies?limit=5"); } catch { return []; }
-}
-
-async function getKillSwitch(): Promise<KillSwitchConfig | null> {
-  try { return await api.get<KillSwitchConfig>("/admin/kill-switch"); } catch { return null; }
-}
-
 export default async function AdminDashboard() {
-  const [users, jobs, strategies, killSwitch] = await Promise.all([
-    getUsers(),
-    getJobs(),
-    getStrategies(),
-    getKillSwitch(),
+  const [usersResult, jobsResult, strategiesResult, killSwitchResult] = await Promise.all([
+    loadApi<User[]>("/admin/users"),
+    loadApi<JobRun[]>("/admin/jobs?limit=5"),
+    loadApi<Strategy[]>("/strategies?limit=5"),
+    loadApi<KillSwitchConfig>("/admin/kill-switch"),
   ]);
+
+  const users = usersResult.data ?? [];
+  const jobs = jobsResult.data ?? [];
+  const strategies = strategiesResult.data ?? [];
+  const killSwitch = killSwitchResult.data;
+  const errors = [usersResult.error, jobsResult.error, strategiesResult.error, killSwitchResult.error].filter(Boolean) as string[];
 
   const activeJobs = jobs.filter((j) => j.status === "running").length;
   const failedJobs = jobs.filter((j) => j.status === "failed").length;
@@ -66,7 +56,12 @@ export default async function AdminDashboard() {
         <p className="text-slate-400 text-sm">System overview and management.</p>
       </div>
 
-      {/* Stats Cards */}
+      {errors.length > 0 && (
+        <div className="rounded-lg border border-yellow-700/40 bg-yellow-900/10 p-4 text-sm text-yellow-300">
+          Some admin data could not be loaded: {errors.join(" · ")}
+        </div>
+      )}
+
       <div className="grid grid-cols-4 gap-4">
         <StatCard label="Total Users" value={users.length} icon="users" />
         <StatCard label="Active Jobs" value={activeJobs} icon="jobs" />
@@ -82,12 +77,11 @@ export default async function AdminDashboard() {
 
       {failedJobs > 0 && (
         <div className="rounded-lg border border-red-700/40 bg-red-900/10 p-4 text-sm text-red-300">
-          ⚠️ {failedJobs} job{failedJobs > 1 ? "s" : ""} failed recently. Check the{" "}
+          {failedJobs} job{failedJobs > 1 ? "s" : ""} failed recently. Check the{" "}
           <Link href="/admin/jobs" className="text-red-400 hover:underline font-medium">Jobs page</Link>.
         </div>
       )}
 
-      {/* Quick Links */}
       <div className="grid grid-cols-4 gap-4">
         {[
           { href: "/admin/jobs", label: "Manage Jobs", desc: "View and monitor pipeline jobs" },
@@ -104,7 +98,6 @@ export default async function AdminDashboard() {
         ))}
       </div>
 
-      {/* Recent Jobs */}
       <section>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-white">Recent Jobs</h2>
@@ -157,17 +150,17 @@ function StatCard({
   highlightColor?: string;
 }) {
   const iconMap: Record<string, string> = {
-    users: "👥",
-    jobs: "⚙️",
-    strategies: "📊",
-    kill: "🛑",
+    users: "U",
+    jobs: "J",
+    strategies: "S",
+    kill: "K",
   };
 
   return (
     <div className="rounded-lg border border-slate-700 bg-slate-800 p-5">
       <div className="flex items-center justify-between">
         <div className="text-sm text-slate-400">{label}</div>
-        <div className="text-lg">{iconMap[icon] ?? "📋"}</div>
+        <div className="text-lg">{iconMap[icon] ?? "card"}</div>
       </div>
       <div className={`text-2xl font-bold mt-2 ${highlight ? highlightColor : "text-white"}`}>
         {value}

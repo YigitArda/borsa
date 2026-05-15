@@ -19,6 +19,7 @@ os.environ.setdefault("TMPDIR", str(TEST_TMP))
 os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{(TEST_TMP / 'test.db').as_posix()}")
 os.environ.setdefault("SYNC_DATABASE_URL", f"sqlite:///{(TEST_TMP / 'test.db').as_posix()}")
 os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("JWT_SECRET", "pytest-jwt-secret")
 
 # Add backend to path before importing the app
 sys.path.insert(0, str(BACKEND))
