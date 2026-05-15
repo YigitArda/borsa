@@ -90,12 +90,40 @@ def ingest_financials(self, tickers: list[str] | None = None):
         session.close()
 
 
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_statements")
+def ingest_statements(self, tickers: list[str] | None = None):
+    from app.services.fundamental_statements import FundamentalStatementsService
+    session = _get_sync_session()
+    try:
+        svc = FundamentalStatementsService(session)
+        tickers = tickers or settings.mvp_tickers
+        results = svc.run_all(tickers)
+        return {"status": "ok", "results": results}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_social")
+def ingest_social(self, tickers: list[str] | None = None):
+    from app.services.social_sentiment import SocialSentimentService
+    session = _get_sync_session()
+    try:
+        svc = SocialSentimentService(session)
+        tickers = tickers or settings.mvp_tickers
+        results = svc.run_all(tickers)
+        return {"status": "ok", "results": results}
+    finally:
+        session.close()
+
+
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.run_full_pipeline")
 def run_full_pipeline(self):
-    """Full weekly pipeline: ingest → macro → news → financials → features → research."""
+    """Full weekly pipeline: ingest → macro → news → social → financials → statements → features → research."""
     ingest_prices.delay()
     ingest_macro.delay()
     ingest_news.delay()
+    ingest_social.delay()
     ingest_financials.delay()
+    ingest_statements.delay()
     compute_features.delay()
     return {"status": "scheduled"}

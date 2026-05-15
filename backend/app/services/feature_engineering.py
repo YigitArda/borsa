@@ -15,7 +15,7 @@ from app.models.stock import Stock
 from app.models.price import PriceDaily, PriceWeekly
 from app.models.feature import FeatureWeekly, LabelWeekly
 from app.services.financial_data import FinancialDataService
-from app.services.macro_data import MacroDataService
+from app.services.macro_data import MacroDataService, SECTOR_TO_ETF_CODE
 from app.services.news_service import NewsService
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,17 @@ FINANCIAL_FEATURES = [
 MACRO_FEATURES = [
     "VIX", "VIX_WEEKLY", "VIX_CHANGE_W", "TNX_10Y",
     "RISK_ON_SCORE", "sp500_trend_20w", "nasdaq_trend_20w",
+    "cpi_proxy_trend_26w",
+    "sector_xlk_trend20w", "sector_xlf_trend20w", "sector_xle_trend20w",
+    "sector_xlv_trend20w", "sector_xli_trend20w", "sector_xlp_trend20w",
+    "sector_xly_trend20w", "sector_xlu_trend20w", "sector_xlre_trend20w",
+    "sector_xlb_trend20w",
+]
+
+VALUATION_PERCENTILE_FEATURES = [
+    "pe_percentile_sector",
+    "pb_percentile_sector",
+    "ev_ebitda_percentile_sector",
 ]
 
 NEWS_FEATURES = [
@@ -57,12 +68,13 @@ NEWS_FEATURES = [
     "news_analyst_flag", "news_mgmt_flag", "news_recency_impact",
 ]
 
-ALL_FEATURES = TECHNICAL_FEATURES + FINANCIAL_FEATURES + MACRO_FEATURES + NEWS_FEATURES
+ALL_FEATURES = TECHNICAL_FEATURES + FINANCIAL_FEATURES + MACRO_FEATURES + NEWS_FEATURES + VALUATION_PERCENTILE_FEATURES
 
 TARGET_NAMES = [
-    "target_2pct_1w",   # next week return >= 2%
-    "target_3pct_1w",   # next week return >= 3%
-    "risk_target_1w",   # next week return <= -2%
+    "target_2pct_1w",      # next week return >= 2%
+    "target_3pct_1w",      # next week return >= 3%
+    "risk_target_1w",      # next week return <= -2%
+    "risk_target_3pct_1w", # next week return <= -3%
     "next_week_return",
     "next_2week_return",
     "next_4week_return",
@@ -254,6 +266,7 @@ class FeatureEngineeringService:
         labels["target_2pct_1w"] = 1.0 if pd.notna(r1) and r1 >= 0.02 else (0.0 if pd.notna(r1) else np.nan)
         labels["target_3pct_1w"] = 1.0 if pd.notna(r1) and r1 >= 0.03 else (0.0 if pd.notna(r1) else np.nan)
         labels["risk_target_1w"] = 1.0 if pd.notna(r1) and r1 <= -0.02 else (0.0 if pd.notna(r1) else np.nan)
+        labels["risk_target_3pct_1w"] = 1.0 if pd.notna(r1) and r1 <= -0.03 else (0.0 if pd.notna(r1) else np.nan)
 
         return labels
 
@@ -333,6 +346,68 @@ class FeatureEngineeringService:
         self.session.execute(stmt)
         self.session.commit()
 
+    def compute_valuation_percentiles_all(self, tickers: list[str]) -> int:
+        """
+        Cross-sectional: for each week, rank each stock's valuation metrics
+        within its sector and store as percentile features (0..1).
+        Must be called after per-stock features are computed.
+        """
+        # Load stocks with sector info
+        stocks = self.session.execute(
+            select(Stock).where(Stock.ticker.in_(tickers))
+        ).scalars().all()
+        stock_by_id = {s.id: s for s in stocks}
+
+        # Load pe_ratio, price_to_book, ev_to_ebitda features for all stocks
+        val_metrics = ["pe_ratio", "price_to_book", "ev_to_ebitda"]
+        from app.models.feature import FeatureWeekly
+        rows = self.session.execute(
+            select(FeatureWeekly).where(
+                FeatureWeekly.stock_id.in_([s.id for s in stocks]),
+                FeatureWeekly.feature_name.in_(val_metrics),
+            )
+        ).scalars().all()
+
+        if not rows:
+            return 0
+
+        df = pd.DataFrame([{
+            "stock_id": r.stock_id,
+            "week_ending": r.week_ending,
+            "feature_name": r.feature_name,
+            "value": r.value,
+        } for r in rows])
+
+        df["sector"] = df["stock_id"].map(lambda sid: (stock_by_id.get(sid) or Stock()).sector or "Unknown")
+        wide = df.pivot_table(index=["stock_id", "week_ending", "sector"], columns="feature_name", values="value").reset_index()
+
+        pct_rows = []
+        feature_map = {"pe_ratio": "pe_percentile_sector", "price_to_book": "pb_percentile_sector", "ev_to_ebitda": "ev_ebitda_percentile_sector"}
+
+        for week, wdf in wide.groupby("week_ending"):
+            for metric, pct_name in feature_map.items():
+                if metric not in wdf.columns:
+                    continue
+                for sector, sdf in wdf.groupby("sector"):
+                    valid = sdf[["stock_id", metric]].dropna(subset=[metric])
+                    if valid.empty:
+                        continue
+                    valid = valid.copy()
+                    valid["pct"] = valid[metric].rank(pct=True)
+                    for _, vrow in valid.iterrows():
+                        pct_rows.append({
+                            "stock_id": int(vrow["stock_id"]),
+                            "week_ending": week,
+                            "feature_name": pct_name,
+                            "value": float(vrow["pct"]),
+                            "feature_set_version": FEATURE_SET_VERSION,
+                        })
+
+        if pct_rows:
+            self._upsert_features(pct_rows)
+            logger.info(f"Valuation percentiles: {len(pct_rows)} rows")
+        return len(pct_rows)
+
     def run_all(self, tickers: list[str]) -> dict:
         results = {}
         for ticker in tickers:
@@ -343,4 +418,9 @@ class FeatureEngineeringService:
             except Exception as e:
                 logger.error(f"Feature error {ticker}: {e}")
                 results[ticker] = 0
+        # Cross-sectional valuation percentiles (batch, after per-stock features)
+        try:
+            self.compute_valuation_percentiles_all(tickers)
+        except Exception as e:
+            logger.error(f"Valuation percentile error: {e}")
         return results

@@ -14,9 +14,16 @@ from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models.strategy import Strategy
+from app.models.strategy import Strategy, ModelPromotion
 from app.services.model_training import ModelTrainer
 from app.services.feature_engineering import TECHNICAL_FEATURES
+from app.services.statistical_tests import (
+    probabilistic_sharpe_ratio,
+    deflated_sharpe_ratio,
+    permutation_test,
+    concentration_check,
+    get_spy_weekly_sharpe,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +37,9 @@ BASE_STRATEGY = {
     "threshold": 0.5,
     "top_n": 5,
     "embargo_weeks": 4,
+    "holding_weeks": 1,
+    "stop_loss": None,
+    "take_profit": None,
 }
 
 ACCEPTANCE_GATE = {
@@ -67,8 +77,18 @@ class StrategyProposer:
 
         elif mutation_type == "change_model":
             new_config["model_type"] = random.choice([
-                "lightgbm", "logistic_regression", "random_forest", "gradient_boosting"
+                "lightgbm", "logistic_regression", "random_forest",
+                "gradient_boosting", "xgboost",
             ])
+
+        # Additional mutations
+        extra = random.choice(["holding_period", "stop_loss", "take_profit", "none"])
+        if extra == "holding_period":
+            new_config["holding_weeks"] = random.choice([1, 2, 4])
+        elif extra == "stop_loss":
+            new_config["stop_loss"] = random.choice([None, -0.03, -0.05, -0.07])
+        elif extra == "take_profit":
+            new_config["take_profit"] = random.choice([None, 0.05, 0.08, 0.12])
 
         return new_config
 
@@ -117,6 +137,24 @@ class AcceptanceGate:
         return passed, summary
 
 
+class RuleBasedResearch:
+    """Evaluate all rule-based strategies on the full dataset."""
+
+    def __init__(self, session: Session, tickers: list[str]):
+        self.session = session
+        self.tickers = tickers
+
+    def run(self) -> list[dict]:
+        from app.services.model_training import ModelTrainer
+        from app.services.rule_based import evaluate_all_rules
+
+        trainer = ModelTrainer(self.session, BASE_STRATEGY)
+        df = trainer.load_dataset(self.tickers)
+        if df.empty:
+            return []
+        return evaluate_all_rules(df, label_col="label")
+
+
 class ResearchLoop:
     def __init__(self, session: Session, tickers: list[str]):
         self.session = session
@@ -156,6 +194,41 @@ class ResearchLoop:
         fold_metrics = [f.metrics for f in folds]
         passed, summary = self.gate.evaluate(fold_metrics)
 
+        # Collect all trade returns from folds for advanced statistics
+        all_returns = []
+        all_trades = []
+        for fold in folds:
+            all_returns.extend(fold.trade_returns or [])
+            all_trades.extend(fold.trade_details or [])
+
+        # Advanced statistical tests
+        from sqlalchemy import func as sqlfunc
+        n_strategies_tested = self.session.execute(
+            __import__("sqlalchemy", fromlist=["select"]).select(sqlfunc.count()).select_from(Strategy)
+        ).scalar() or 1
+
+        dsr = deflated_sharpe_ratio(all_returns, n_trials=n_strategies_tested) if all_returns else 0.0
+        psr = probabilistic_sharpe_ratio(all_returns, sr_benchmark=0.0) if all_returns else 0.0
+        perm_pvalue = permutation_test(all_returns, n_permutations=300) if len(all_returns) >= 10 else 1.0
+        concentration = concentration_check(all_trades)
+        spy_sharpe = get_spy_weekly_sharpe(self.session)
+
+        outperforms_spy = summary.get("avg_sharpe", 0.0) > spy_sharpe
+
+        # Tighten gate: also require permutation p-value < 0.1 and DSR > 0
+        if passed and (perm_pvalue > 0.1 or dsr <= 0):
+            passed = False
+            summary["reason"] = summary.get("reason", "") + f"; perm_pvalue={perm_pvalue:.3f} dsr={dsr:.3f}"
+
+        summary.update({
+            "deflated_sharpe": round(dsr, 4),
+            "probabilistic_sr": round(psr, 4),
+            "permutation_pvalue": round(perm_pvalue, 4),
+            "spy_sharpe": round(spy_sharpe, 4),
+            "outperforms_spy": outperforms_spy,
+            "concentration": concentration,
+        })
+
         # Persist strategy
         strategy = Strategy(
             name=f"gen{generation}_{'_'.join(new_config['features'][:3])}",
@@ -170,6 +243,23 @@ class ResearchLoop:
 
         if passed:
             strategy.status = "promoted"
+            # Record promotion event
+            promotion = ModelPromotion(
+                strategy_id=strategy.id,
+                avg_sharpe=summary.get("avg_sharpe"),
+                deflated_sharpe=dsr,
+                probabilistic_sr=psr,
+                permutation_pvalue=perm_pvalue,
+                spy_sharpe=spy_sharpe,
+                outperforms_spy=str(outperforms_spy),
+                avg_win_rate=summary.get("avg_win_rate"),
+                total_trades=summary.get("total_trades"),
+                min_drawdown=summary.get("min_drawdown"),
+                avg_profit_factor=summary.get("avg_profit_factor"),
+                concentration_ok=str(concentration.get("ok", False)),
+                details=summary,
+            )
+            self.session.add(promotion)
             self.session.commit()
             logger.info(f"Strategy {strategy.id} PROMOTED: {summary}")
             return {"status": "promoted", "strategy_id": strategy.id, **summary}

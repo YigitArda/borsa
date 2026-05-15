@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     min_trades_for_promotion: int = 30
     holdout_months: int = 18
 
+    # API auth — set API_KEY env var to enable Bearer token protection on write routes
+    api_key: str | None = None
+
     class Config:
         env_file = ".env"
 

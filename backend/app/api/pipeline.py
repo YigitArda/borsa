@@ -47,6 +47,22 @@ async def trigger_financials(body: TickerList | None = None):
     return {"task_id": task.id, "status": "queued"}
 
 
+@router.post("/statements")
+async def trigger_statements(body: TickerList | None = None):
+    from app.tasks.pipeline_tasks import ingest_statements
+    tickers = body.tickers if body else None
+    task = ingest_statements.delay(tickers=tickers)
+    return {"task_id": task.id, "status": "queued"}
+
+
+@router.post("/social")
+async def trigger_social(body: TickerList | None = None):
+    from app.tasks.pipeline_tasks import ingest_social
+    tickers = body.tickers if body else None
+    task = ingest_social.delay(tickers=tickers)
+    return {"task_id": task.id, "status": "queued"}
+
+
 @router.post("/run-all")
 async def trigger_full_pipeline():
     from app.tasks.pipeline_tasks import run_full_pipeline

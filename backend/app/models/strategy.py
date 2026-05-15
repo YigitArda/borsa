@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, DateTime, Integer, Text, JSON, func
+from sqlalchemy import String, DateTime, Integer, Float, Text, JSON, func
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -30,3 +30,24 @@ class ModelVersion(Base):
     train_end: Mapped[str] = mapped_column(String(20))
     metrics: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ModelPromotion(Base):
+    """Records each time a strategy passes the acceptance gate and is promoted."""
+    __tablename__ = "model_promotions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    promoted_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    avg_sharpe: Mapped[float | None] = mapped_column(Float)
+    deflated_sharpe: Mapped[float | None] = mapped_column(Float)
+    probabilistic_sr: Mapped[float | None] = mapped_column(Float)
+    permutation_pvalue: Mapped[float | None] = mapped_column(Float)
+    spy_sharpe: Mapped[float | None] = mapped_column(Float)
+    outperforms_spy: Mapped[bool | None] = mapped_column(String(5))
+    avg_win_rate: Mapped[float | None] = mapped_column(Float)
+    total_trades: Mapped[int | None] = mapped_column(Integer)
+    min_drawdown: Mapped[float | None] = mapped_column(Float)
+    avg_profit_factor: Mapped[float | None] = mapped_column(Float)
+    concentration_ok: Mapped[bool | None] = mapped_column(String(5))
+    details: Mapped[dict | None] = mapped_column(JSON)

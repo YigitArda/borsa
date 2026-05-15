@@ -139,6 +139,10 @@ class DataIngestionService:
         weekly["weekly_return"] = weekly["close"].pct_change()
         weekly["realized_volatility"] = df["close"].pct_change().resample("W-FRI").std() * (5 ** 0.5)
 
+        # Max drawdown and max rise within each week (intra-week high/low vs open)
+        weekly["max_drawdown_in_week"] = ((weekly["low"] - weekly["open"]) / weekly["open"]).where(weekly["open"] > 0)
+        weekly["max_rise_in_week"] = ((weekly["high"] - weekly["open"]) / weekly["open"]).where(weekly["open"] > 0)
+
         insert_rows = []
         for week_end, row in weekly.iterrows():
             insert_rows.append({
@@ -151,6 +155,8 @@ class DataIngestionService:
                 "volume": int(row["volume"]) if pd.notna(row["volume"]) else None,
                 "weekly_return": row["weekly_return"] if pd.notna(row["weekly_return"]) else None,
                 "realized_volatility": row["realized_volatility"] if pd.notna(row["realized_volatility"]) else None,
+                "max_drawdown_in_week": row["max_drawdown_in_week"] if pd.notna(row.get("max_drawdown_in_week")) else None,
+                "max_rise_in_week": row["max_rise_in_week"] if pd.notna(row.get("max_rise_in_week")) else None,
             })
 
         if not insert_rows:
@@ -159,7 +165,11 @@ class DataIngestionService:
         stmt = pg_insert(PriceWeekly).values(insert_rows)
         stmt = stmt.on_conflict_do_update(
             index_elements=["stock_id", "week_ending"],
-            set_={k: getattr(stmt.excluded, k) for k in ["open", "high", "low", "close", "volume", "weekly_return", "realized_volatility"]},
+            set_={k: getattr(stmt.excluded, k) for k in [
+                "open", "high", "low", "close", "volume",
+                "weekly_return", "realized_volatility",
+                "max_drawdown_in_week", "max_rise_in_week",
+            ]},
         )
         self.session.execute(stmt)
         self.session.commit()

@@ -6,7 +6,9 @@ Indicators:
   10Y yield → ^TNX
   S&P 500   → ^GSPC
   Nasdaq    → ^IXIC
-  Fed rate  → approximated from 3-month T-bill ^IRX or FRED
+  Fed rate  → approximated from 3-month T-bill ^IRX
+  CPI proxy → TIP (iShares TIPS ETF — tracks inflation expectations)
+  Sector ETFs → XLK, XLF, XLE, XLV, XLI, XLP, XLY, XLU, XLRE, XLB
 """
 import logging
 from datetime import date
@@ -26,7 +28,41 @@ MACRO_TICKERS = {
     "TNX_10Y": "^TNX",
     "SP500": "^GSPC",
     "NASDAQ": "^IXIC",
-    "FED_RATE_PROXY": "^IRX",  # 13-week T-bill as Fed rate proxy
+    "FED_RATE_PROXY": "^IRX",
+    "CPI_PROXY": "TIP",  # iShares TIPS ETF as inflation proxy
+}
+
+SECTOR_ETF_MAP = {
+    "SECTOR_XLK": "XLK",   # Technology
+    "SECTOR_XLF": "XLF",   # Financials
+    "SECTOR_XLE": "XLE",   # Energy
+    "SECTOR_XLV": "XLV",   # Health Care
+    "SECTOR_XLI": "XLI",   # Industrials
+    "SECTOR_XLP": "XLP",   # Consumer Staples
+    "SECTOR_XLY": "XLY",   # Consumer Discretionary
+    "SECTOR_XLU": "XLU",   # Utilities
+    "SECTOR_XLRE": "XLRE", # Real Estate
+    "SECTOR_XLB": "XLB",   # Materials
+}
+
+# Map yfinance sector strings → ETF code used in features
+SECTOR_TO_ETF_CODE = {
+    "Technology": "SECTOR_XLK",
+    "Financial Services": "SECTOR_XLF",
+    "Financials": "SECTOR_XLF",
+    "Energy": "SECTOR_XLE",
+    "Healthcare": "SECTOR_XLV",
+    "Health Care": "SECTOR_XLV",
+    "Industrials": "SECTOR_XLI",
+    "Consumer Defensive": "SECTOR_XLP",
+    "Consumer Staples": "SECTOR_XLP",
+    "Consumer Cyclical": "SECTOR_XLY",
+    "Consumer Discretionary": "SECTOR_XLY",
+    "Utilities": "SECTOR_XLU",
+    "Real Estate": "SECTOR_XLRE",
+    "Basic Materials": "SECTOR_XLB",
+    "Materials": "SECTOR_XLB",
+    "Communication Services": "SECTOR_XLK",  # map to tech as closest proxy
 }
 
 
@@ -36,7 +72,8 @@ class MacroDataService:
 
     def ingest_macro(self, start: str = "2010-01-01") -> int:
         total = 0
-        for code, symbol in MACRO_TICKERS.items():
+        all_tickers = {**MACRO_TICKERS, **SECTOR_ETF_MAP}
+        for code, symbol in all_tickers.items():
             try:
                 df = yf.download(symbol, start=start, auto_adjust=True, progress=False)
                 if df.empty:
@@ -70,7 +107,7 @@ class MacroDataService:
             except Exception as e:
                 logger.error(f"Macro ingest failed {code}: {e}")
 
-        # Derive weekly changes and risk-on/risk-off score
+        # Derive weekly changes, risk-on score, and sector trends
         self._compute_derived_weekly()
         self.session.commit()
         logger.info(f"Ingested {total} macro rows")
@@ -137,10 +174,19 @@ class MacroDataService:
         wide = df.pivot_table(index="date", columns="code", values="value").sort_index()
         weekly = wide.resample("W-FRI").last().ffill(limit=4)  # forward-fill up to 4 weeks
 
-        # Compute derived: SP500 trend (20-week slope), Nasdaq trend
+        # SP500 and Nasdaq 20-week trends
         for col, trend_name in [("SP500", "sp500_trend_20w"), ("NASDAQ", "nasdaq_trend_20w")]:
             if col in weekly.columns:
                 weekly[trend_name] = weekly[col].pct_change(20)
+
+        # CPI proxy trend (26-week = ~6-month change in TIP ETF)
+        if "CPI_PROXY" in weekly.columns:
+            weekly["cpi_proxy_trend_26w"] = weekly["CPI_PROXY"].pct_change(26)
+
+        # Sector ETF 20-week trends
+        for code in SECTOR_ETF_MAP:
+            if code in weekly.columns:
+                weekly[f"{code.lower()}_trend20w"] = weekly[code].pct_change(20)
 
         result = {}
         for idx, row in weekly.iterrows():

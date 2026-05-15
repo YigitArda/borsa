@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, DateTime, Float, Integer, Text, Boolean, JSON, func
+from sqlalchemy import String, DateTime, Float, Integer, Text, Boolean, JSON, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -37,15 +37,15 @@ class NewsAnalysis(Base):
 
 class SocialSentiment(Base):
     __tablename__ = "social_sentiment"
+    __table_args__ = (UniqueConstraint("stock_id", "week_ending", "source", name="uq_social_stock_week_source"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     stock_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    # Week-level aggregation
     week_ending: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     mention_count: Mapped[int | None] = mapped_column(Integer)
-    mention_momentum: Mapped[float | None] = mapped_column(Float)   # vs prior week
-    sentiment_polarity: Mapped[float | None] = mapped_column(Float) # -1 to 1
-    hype_risk: Mapped[float | None] = mapped_column(Float)          # 0 to 1
-    abnormal_attention: Mapped[float | None] = mapped_column(Float) # z-score vs baseline
-    source: Mapped[str] = mapped_column(String(50), default="reddit")
+    mention_momentum: Mapped[float | None] = mapped_column(Float)
+    sentiment_polarity: Mapped[float | None] = mapped_column(Float)
+    hype_risk: Mapped[float | None] = mapped_column(Float)
+    abnormal_attention: Mapped[float | None] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(50), default="yfinance_proxy")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

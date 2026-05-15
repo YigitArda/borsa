@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.backtest import WalkForwardResult, BacktestMetric, BacktestRun
 from app.models.model_run import ModelRun
-from app.models.strategy import Strategy
+from app.models.strategy import Strategy, ModelPromotion
 
 router = APIRouter(prefix="/research", tags=["research"])
 
@@ -105,3 +105,51 @@ async def get_risk_warnings(db: AsyncSession = Depends(get_db)):
             })
 
     return {"warnings": warnings, "count": len(warnings)}
+
+
+@router.post("/sector-models")
+async def run_sector_models(tickers: list[str] | None = None):
+    """Train and evaluate sector-segmented models (Technology, Financials, etc.)."""
+    from app.tasks.pipeline_tasks import _get_sync_session
+    from app.services.model_training import ModelTrainer
+    from app.services.research_loop import BASE_STRATEGY
+    from app.config import settings as cfg
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    engine = create_engine(cfg.sync_database_url)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    try:
+        trainer = ModelTrainer(session, BASE_STRATEGY)
+        results = trainer.train_per_sector(tickers or cfg.mvp_tickers)
+        return {"status": "ok", "sectors": results}
+    finally:
+        session.close()
+
+
+@router.get("/promotions")
+async def get_promotions(limit: int = 50, db: AsyncSession = Depends(get_db)):
+    """All promotion events with statistical validation details."""
+    rows = await db.execute(
+        select(ModelPromotion).order_by(ModelPromotion.promoted_at.desc()).limit(limit)
+    )
+    promotions = rows.scalars().all()
+    return [
+        {
+            "id": p.id,
+            "strategy_id": p.strategy_id,
+            "promoted_at": str(p.promoted_at),
+            "avg_sharpe": p.avg_sharpe,
+            "deflated_sharpe": p.deflated_sharpe,
+            "probabilistic_sr": p.probabilistic_sr,
+            "permutation_pvalue": p.permutation_pvalue,
+            "spy_sharpe": p.spy_sharpe,
+            "outperforms_spy": p.outperforms_spy,
+            "avg_win_rate": p.avg_win_rate,
+            "total_trades": p.total_trades,
+            "min_drawdown": p.min_drawdown,
+            "concentration_ok": p.concentration_ok,
+            "details": p.details,
+        }
+        for p in promotions
+    ]

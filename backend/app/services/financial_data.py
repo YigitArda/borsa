@@ -29,9 +29,11 @@ FINANCIAL_METRICS = [
     "roe", "roa", "roic",
     # Growth (TTM)
     "revenue_growth", "earnings_growth", "eps_ttm",
+    "net_income_growth",
     # Balance sheet
     "debt_to_equity", "current_ratio", "quick_ratio",
     "free_cashflow", "operating_cashflow",
+    "total_cash", "total_debt",
     # Per share
     "book_value_per_share", "revenue_per_share",
     # Market
@@ -59,6 +61,8 @@ YFINANCE_MAP = {
     "quick_ratio": "quickRatio",
     "free_cashflow": "freeCashflow",
     "operating_cashflow": "operatingCashflow",
+    "total_cash": "totalCash",
+    "total_debt": "totalDebt",
     "book_value_per_share": "bookValue",
     "revenue_per_share": "revenuePerShare",
     "market_cap": "marketCap",

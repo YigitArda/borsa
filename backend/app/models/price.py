@@ -36,3 +36,4 @@ class PriceWeekly(Base):
     weekly_return: Mapped[float | None] = mapped_column(Float)
     realized_volatility: Mapped[float | None] = mapped_column(Float)
     max_drawdown_in_week: Mapped[float | None] = mapped_column(Float)
+    max_rise_in_week: Mapped[float | None] = mapped_column(Float)

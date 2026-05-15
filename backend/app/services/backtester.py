@@ -117,10 +117,13 @@ class Backtester:
     """
     Simulates weekly signal → trade execution.
 
-    predictions_df: DataFrame with columns [week_ending, ticker, stock_id, prob, close_price]
-    price_df: DataFrame with columns [date, ticker, open, close] — for entry/exit pricing
+    predictions_df: DataFrame with columns [week_ending, ticker, stock_id, prob]
+    price_df: DataFrame with columns [date, ticker, open, close, high, low]
     threshold: minimum probability to take a trade
     top_n: max positions per week
+    holding_weeks: how many weeks to hold (1, 2, or 4)
+    stop_loss: max loss before forced exit (e.g. -0.05 = -5%)
+    take_profit: profit target for early exit (e.g. 0.08 = +8%)
     """
 
     def __init__(
@@ -129,11 +132,17 @@ class Backtester:
         price_df: pd.DataFrame,
         threshold: float = 0.5,
         top_n: int = 5,
+        holding_weeks: int = 1,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
     ):
         self.predictions = predictions_df
         self.prices = price_df
         self.threshold = threshold
         self.top_n = top_n
+        self.holding_weeks = holding_weeks
+        self.stop_loss = stop_loss
+        self.take_profit = take_profit
 
     def run(self) -> BacktestResult:
         trades: list[Trade] = []
@@ -150,16 +159,21 @@ class Backtester:
             for _, row in candidates.iterrows():
                 ticker = row["ticker"]
                 entry_price = self._get_monday_open(ticker, week_end)
-                exit_price = self._get_friday_close(ticker, week_end, offset=1)
+                exit_price = self._get_friday_close(ticker, week_end, offset=self.holding_weeks)
 
                 if entry_price is None or exit_price is None:
                     continue
+
+                # Stop-loss / take-profit: check intra-period daily prices
+                exit_price, exit_reason = self._apply_sl_tp(
+                    ticker, entry_price, week_end, exit_price
+                )
 
                 t = Trade(
                     ticker=ticker,
                     stock_id=int(row["stock_id"]),
                     entry_date=self._monday_after(week_end),
-                    exit_date=self._friday_after(week_end, offset=1),
+                    exit_date=self._friday_after(week_end, offset=self.holding_weeks),
                     entry_price=entry_price,
                     exit_price=exit_price,
                     signal_strength=float(row["prob"]),
@@ -183,6 +197,36 @@ class Backtester:
         return BacktestResult(trades=trades, equity_curve=equity_series)
 
     # ------------------------------------------------------------------
+
+    def _apply_sl_tp(self, ticker: str, entry_price: float, week_end: date, planned_exit: float | None) -> tuple[float | None, str]:
+        """Check intra-period daily prices for stop-loss/take-profit triggers."""
+        if not self.stop_loss and not self.take_profit:
+            return planned_exit, "normal"
+        if entry_price is None or entry_price == 0:
+            return planned_exit, "normal"
+
+        entry_date = self._monday_after(week_end)
+        exit_date = self._friday_after(week_end, offset=self.holding_weeks)
+
+        daily = self.prices[
+            (self.prices["ticker"] == ticker) &
+            (self.prices["date"] >= entry_date) &
+            (self.prices["date"] <= exit_date)
+        ].sort_values("date")
+
+        for _, row in daily.iterrows():
+            high = row.get("high") or row.get("close")
+            low = row.get("low") or row.get("close")
+
+            if self.take_profit and high and (high - entry_price) / entry_price >= self.take_profit:
+                tp_price = entry_price * (1 + self.take_profit)
+                return tp_price, "take_profit"
+
+            if self.stop_loss and low and (low - entry_price) / entry_price <= self.stop_loss:
+                sl_price = entry_price * (1 + self.stop_loss)
+                return sl_price, "stop_loss"
+
+        return planned_exit, "normal"
 
     def _get_monday_open(self, ticker: str, week_end: date) -> float | None:
         monday = self._monday_after(week_end)

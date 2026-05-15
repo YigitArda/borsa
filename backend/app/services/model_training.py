@@ -21,6 +21,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 try:
+    import xgboost as xgb
+    HAS_XGBOOST = True
+except ImportError:
+    HAS_XGBOOST = False
+
+try:
     from catboost import CatBoostClassifier
     HAS_CATBOOST = True
 except ImportError:
@@ -46,6 +52,8 @@ class WalkForwardFold:
     test_end: date
     metrics: dict
     n_trades: int
+    trade_returns: list[float] = None     # individual trade returns for statistical tests
+    trade_details: list[dict] = None      # ticker + entry_date + return_pct
 
 
 class ModelTrainer:
@@ -146,8 +154,10 @@ class ModelTrainer:
                 train_end=train_end.date(),
                 test_start=test_start.date(),
                 test_end=test_end.date(),
-                metrics=metrics,
+                metrics={k: v for k, v in metrics.items() if not k.startswith("_")},
                 n_trades=metrics.get("n_trades", 0),
+                trade_returns=metrics.get("_trade_returns", []),
+                trade_details=metrics.get("_trade_details", []),
             ))
 
             fold_num += 1
@@ -185,6 +195,14 @@ class ModelTrainer:
             model = GradientBoostingClassifier(
                 n_estimators=150, max_depth=3, learning_rate=0.05,
                 subsample=0.8, random_state=42,
+            )
+            model.fit(X_scaled, y)
+        elif self.model_type == "xgboost" and HAS_XGBOOST:
+            model = xgb.XGBClassifier(
+                n_estimators=200, max_depth=4, learning_rate=0.05,
+                subsample=0.8, colsample_bytree=0.8,
+                scale_pos_weight=pos_weight, random_state=42,
+                eval_metric="logloss", verbosity=0,
             )
             model.fit(X_scaled, y)
         elif self.model_type == "catboost" and HAS_CATBOOST:
@@ -225,11 +243,19 @@ class ModelTrainer:
         bt = Backtester(pred_df, price_df, threshold=self.threshold, top_n=self.top_n)
         bt_result = bt.run()
 
+        trade_returns = [t.return_pct for t in bt_result.trades]
+        trade_details = [
+            {"ticker": t.ticker, "entry_date": t.entry_date, "return_pct": t.return_pct}
+            for t in bt_result.trades
+        ]
+
         metrics = {
             "precision": round(precision, 4),
             "recall": round(recall, 4),
             "f1": round(f1, 4),
             **bt_result.to_dict(),
+            "_trade_returns": trade_returns,
+            "_trade_details": trade_details,
         }
         return metrics
 
@@ -297,6 +323,48 @@ class ModelTrainer:
                 logger.info(f"Per-stock model {ticker}: sharpe={metrics.get('sharpe')}")
             except Exception as e:
                 logger.error(f"Per-stock model failed {ticker}: {e}")
+
+        return results
+
+    def train_per_sector(self, tickers: list[str], min_rows: int = 200) -> dict[str, dict]:
+        """Train one model per sector grouping (tech, financials, energy, etc.)."""
+        results = {}
+        df = self.load_dataset(tickers)
+        if df.empty:
+            return results
+
+        stocks = self.session.execute(
+            select(Stock).where(Stock.ticker.in_(tickers))
+        ).scalars().all()
+        ticker_to_sector = {s.ticker: (s.sector or "Unknown") for s in stocks}
+        df["sector"] = df["ticker"].map(ticker_to_sector).fillna("Unknown")
+
+        for sector, sector_df in df.groupby("sector"):
+            sector_df = sector_df.sort_values("week_ending")
+            if len(sector_df) < min_rows:
+                logger.info(f"Not enough data for sector model: {sector} ({len(sector_df)} rows)")
+                continue
+
+            split = int(len(sector_df) * 0.8)
+            train = sector_df.iloc[:split]
+            test = sector_df.iloc[split:]
+
+            try:
+                model, scaler = self._train(train)
+                sector_tickers = list(sector_df["ticker"].unique())
+                metrics = self._evaluate(model, scaler, test, sector_tickers)
+                feature_cols = [c for c in self.features if c in train.columns]
+                if not feature_cols:
+                    feature_cols = [c for c in train.columns if c not in ["stock_id", "week_ending", "label", "ticker", "sector"]]
+                importance = self.get_feature_importance(model, feature_cols)
+                results[sector] = {
+                    "n_stocks": len(sector_tickers),
+                    "metrics": metrics,
+                    "top_features": sorted(importance.items(), key=lambda x: -x[1])[:5],
+                }
+                logger.info(f"Sector model {sector}: sharpe={metrics.get('sharpe')}")
+            except Exception as e:
+                logger.error(f"Sector model failed {sector}: {e}")
 
         return results
 
