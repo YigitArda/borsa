@@ -832,3 +832,115 @@ async def get_meta_learner_status():
         }
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# ArXiv paper scanner endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/papers")
+async def get_arxiv_papers(limit: int = 30, unread_only: bool = False):
+    """Return recent ArXiv quantitative finance papers."""
+    from app.services.arxiv_scanner import ArxivScanner
+    session = _make_sync_session()
+    try:
+        scanner = ArxivScanner(session)
+        return {"papers": scanner.get_recent(limit=limit, unread_only=unread_only)}
+    finally:
+        session.close()
+
+
+@router.post("/papers/{paper_id}/read")
+async def mark_paper_read(paper_id: int):
+    """Mark a paper as read."""
+    from app.services.arxiv_scanner import ArxivScanner
+    session = _make_sync_session()
+    try:
+        ok = ArxivScanner(session).mark_read(paper_id)
+        if not ok:
+            raise HTTPException(404, "Paper not found")
+        return {"status": "ok"}
+    finally:
+        session.close()
+
+
+@router.get("/papers/insights")
+async def get_research_insights(status: str | None = None, limit: int = 50):
+    """Return Claude-extracted feature ideas from papers."""
+    from app.services.arxiv_scanner import FeatureExtractor
+    session = _make_sync_session()
+    try:
+        return {"insights": FeatureExtractor(session).get_insights(status=status, limit=limit)}
+    finally:
+        session.close()
+
+
+@router.post("/papers/insights/{insight_id}/status")
+async def update_insight_status(insight_id: int, status: str):
+    """Update insight status: approved / rejected / implemented."""
+    if status not in {"approved", "rejected", "implemented", "new"}:
+        raise HTTPException(400, "Invalid status")
+    from app.services.arxiv_scanner import FeatureExtractor
+    session = _make_sync_session()
+    try:
+        ok = FeatureExtractor(session).update_status(insight_id, status)
+        if not ok:
+            raise HTTPException(404, "Insight not found")
+        return {"status": "ok", "new_status": status}
+    finally:
+        session.close()
+
+
+@router.post("/papers/insights/{insight_id}/generate-code")
+async def generate_insight_code(insight_id: int):
+    """Generate implementation code for an approved insight (human review required)."""
+    from app.services.arxiv_scanner import AutoImplementer
+    session = _make_sync_session()
+    try:
+        impl = AutoImplementer(session)
+        code = impl.generate_code(insight_id)
+        if code is None:
+            raise HTTPException(400, "Generation failed (not approved or API key missing)")
+        passed, error = impl.sandbox_test(code)
+        return {"insight_id": insight_id, "code": code, "sandbox_passed": passed, "sandbox_error": error or None}
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Bandit, stacker, mutation memory endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/bandit/status")
+async def get_bandit_status():
+    """Return Thompson Sampling Beta parameters for all strategy arms."""
+    from app.services.strategy_bandit import StrategyBandit
+    session = _make_sync_session()
+    try:
+        return {"arms": StrategyBandit(session).arm_summary()}
+    finally:
+        session.close()
+
+
+@router.get("/signal-stacker/weights")
+async def get_signal_stacker_weights():
+    """Return regime-conditional signal stacker weights."""
+    from app.services.signal_stacker import SignalStacker
+    session = _make_sync_session()
+    try:
+        stacker = SignalStacker(session)
+        stacker.load_weights()
+        return stacker.weights_summary()
+    finally:
+        session.close()
+
+
+@router.get("/mutation-memory/summary")
+async def get_mutation_memory_summary():
+    """Return top/bottom features and mutation type scores."""
+    from app.services.mutation_memory import MutationScoreTracker
+    session = _make_sync_session()
+    try:
+        return MutationScoreTracker(session).summary()
+    finally:
+        session.close()

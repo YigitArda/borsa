@@ -22,6 +22,8 @@ from app.models.meta_learner_data import MetaLearnerTrainingData
 from app.models.strategy_bandit_arm import StrategyBanditArm
 from app.models.rl_agent_qtable import RLAgentQTable
 from app.models.research_budget import ResearchTrialBudget
+from app.models.pead_signal import PEADSignal
+from app.models.short_interest import ShortInterestData
 
 __all__ = [
     "Stock", "StockUniverseSnapshot", "TickerAlias", "CorporateAction",
@@ -48,4 +50,6 @@ __all__ = [
     "StrategyBanditArm",
     "RLAgentQTable",
     "ResearchTrialBudget",
+    "PEADSignal",
+    "ShortInterestData",
 ]

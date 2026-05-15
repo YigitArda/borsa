@@ -426,6 +426,69 @@ def run_regime_aware_backtest(
         session.close()
 
 
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.scan_arxiv_papers")
+def scan_arxiv_papers(self, days: int = 7, max_results: int = 50):
+    """Fetch recent quantitative finance papers from ArXiv."""
+    from app.services.arxiv_scanner import ArxivScanner
+    session = _get_sync_session()
+    try:
+        scanner = ArxivScanner(session)
+        n_new = scanner.fetch_recent(days=days, max_results=max_results)
+        return {"status": "ok", "new_papers": n_new}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.extract_arxiv_features")
+def extract_arxiv_features(self, limit: int = 10):
+    """Send unprocessed paper abstracts to Claude API for feature extraction."""
+    from app.services.arxiv_scanner import FeatureExtractor
+    session = _get_sync_session()
+    try:
+        extractor = FeatureExtractor(session)
+        n = extractor.extract_from_unprocessed(limit=limit)
+        return {"status": "ok", "insights_created": n}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_pead")
+def ingest_pead(self, tickers: list[str] | None = None):
+    """Ingest PEAD earnings data from yfinance for all tickers."""
+    from app.services.pead_factor import PEADFactor
+    session = _get_sync_session()
+    try:
+        tickers = tickers or settings.mvp_tickers
+        svc = PEADFactor(session)
+        results = svc.run_all(tickers)
+        total = sum(results.values())
+        logger.info(f"PEAD ingested {total} records for {len(tickers)} tickers")
+        return {"status": "ok", "total_records": total, "tickers": len(tickers)}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_short_interest")
+def ingest_short_interest(self, tickers: list[str] | None = None, use_finra: bool = True):
+    """Ingest short interest data from yfinance (+ optionally FINRA) for all tickers."""
+    from app.services.short_interest_factor import ShortInterestService
+    from datetime import date, timedelta
+    session = _get_sync_session()
+    try:
+        tickers = tickers or settings.mvp_tickers
+        svc = ShortInterestService(session)
+        results = svc.run_all(tickers)
+        total = sum(results.values())
+        if use_finra:
+            # Try yesterday's FINRA data
+            finra_count = svc.ingest_from_finra(date.today() - timedelta(days=1))
+            logger.info(f"FINRA SHO: {finra_count} records")
+        logger.info(f"Short interest ingested for {len(tickers)} tickers")
+        return {"status": "ok", "yfinance_records": total, "tickers": len(tickers)}
+    finally:
+        session.close()
+
+
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.snapshot_universe")
 def snapshot_universe(self, index_name: str = "SP500", tickers: list[str] | None = None):
     """Record a survivorship-safe universe snapshot for today."""
@@ -468,6 +531,8 @@ def run_full_pipeline(
         ingest_social.si(tickers=tickers),
         ingest_financials.si(tickers=tickers),
         ingest_statements.si(tickers=tickers),
+        ingest_pead.si(tickers=tickers),
+        ingest_short_interest.si(tickers=tickers),
         compute_features.si(tickers=tickers),
         # Detect regimes after macro data is fresh (uses SPY prices + VIX)
         detect_regimes.si(),
@@ -490,6 +555,8 @@ def run_full_pipeline(
             "ingest_social",
             "ingest_financials",
             "ingest_statements",
+            "ingest_pead",
+            "ingest_short_interest",
             "compute_features",
             "detect_regimes",
             "generate_weekly_predictions",

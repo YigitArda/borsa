@@ -85,7 +85,8 @@ class FinancialDataService:
             return 0
 
         try:
-            info = yf.Ticker(ticker).info
+            t = yf.Ticker(ticker)
+            info = t.info
         except Exception as e:
             logger.error(f"yfinance info failed for {ticker}: {e}")
             return 0
@@ -98,7 +99,7 @@ class FinancialDataService:
                 try:
                     rows.append({
                         "stock_id": stock.id,
-                        "fiscal_period_end": today,  # approximate — not true PIT
+                        "fiscal_period_end": today,
                         "as_of_date": today,
                         "metric_name": metric_name,
                         "value": float(val),
@@ -107,6 +108,14 @@ class FinancialDataService:
                     })
                 except (TypeError, ValueError):
                     pass
+
+        # ERM: Earnings Revision Momentum
+        # Compare current forward EPS estimate vs prior quarter estimate
+        try:
+            erm_rows = self._compute_erm(t, stock.id, today)
+            rows.extend(erm_rows)
+        except Exception as exc:
+            logger.debug("ERM computation failed for %s: %s", ticker, exc)
 
         if not rows:
             return 0
@@ -120,6 +129,79 @@ class FinancialDataService:
         self.session.commit()
         logger.info(f"Ingested {len(rows)} financial metrics for {ticker}")
         return len(rows)
+
+    def _compute_erm(self, ticker_obj, stock_id: int, today: date) -> list[dict]:
+        """
+        Earnings Revision Momentum (ERM) from analyst EPS estimates.
+
+        erm_score = (current_consensus - prior_consensus) / |prior_consensus|
+        forward_pe_change = forward_pe_now - forward_pe_3m_ago (stored from prior ingestion)
+
+        Uses yfinance earnings_estimate if available.
+        """
+        rows = []
+        try:
+            est = ticker_obj.earnings_estimate
+            if est is not None and not est.empty and "avg" in est.columns:
+                estimates = est["avg"].dropna()
+                if len(estimates) >= 2:
+                    current = float(estimates.iloc[0])
+                    prior = float(estimates.iloc[1])
+                    if abs(prior) > 1e-6:
+                        erm = (current - prior) / abs(prior)
+                        rows.append({
+                            "stock_id": stock_id,
+                            "fiscal_period_end": today,
+                            "as_of_date": today,
+                            "metric_name": "erm_score",
+                            "value": round(float(erm), 6),
+                            "is_ttm": False,
+                            "data_source": "yfinance_erm",
+                        })
+        except Exception:
+            pass
+
+        # forward_pe_change: compare current forward_pe to 3-month-ago stored value
+        try:
+            from datetime import timedelta
+            three_months_ago = today - timedelta(days=90)
+            prev_fpe_row = self.session.execute(
+                select(FinancialMetric)
+                .where(
+                    FinancialMetric.stock_id == stock_id,
+                    FinancialMetric.metric_name == "forward_pe",
+                    FinancialMetric.as_of_date <= three_months_ago,
+                )
+                .order_by(FinancialMetric.as_of_date.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+            current_fpe_row = self.session.execute(
+                select(FinancialMetric)
+                .where(
+                    FinancialMetric.stock_id == stock_id,
+                    FinancialMetric.metric_name == "forward_pe",
+                    FinancialMetric.as_of_date > three_months_ago,
+                )
+                .order_by(FinancialMetric.as_of_date.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if prev_fpe_row and current_fpe_row and prev_fpe_row.value and current_fpe_row.value:
+                fpe_change = current_fpe_row.value - prev_fpe_row.value
+                rows.append({
+                    "stock_id": stock_id,
+                    "fiscal_period_end": today,
+                    "as_of_date": today,
+                    "metric_name": "forward_pe_change",
+                    "value": round(float(fpe_change), 4),
+                    "is_ttm": False,
+                    "data_source": "yfinance_derived",
+                })
+        except Exception:
+            pass
+
+        return rows
 
     def ingest_pit_csv(self, path: str, data_source: str = "pit_csv") -> int:
         """Import point-in-time financial metrics from a licensed/curated CSV.

@@ -20,10 +20,21 @@ from app.services.macro_data import MacroDataService, SECTOR_TO_ETF_CODE
 from app.services.news_service import NewsService
 from app.services.price_adjustments import adjusted_ohlc
 from app.services.social_sentiment import SocialSentimentService
+from app.services.behavioral_signals import (
+    compute_all_behavioral, compute_herding_score, BEHAVIORAL_FEATURES,
+)
+from app.services.price_nlp import PriceNLPService, PRICE_NLP_FEATURES
+from app.services.factor_momentum_lowvol import (
+    compute_momentum_features, compute_beta_52w, compute_qmj_score,
+    MomentumLowVolBatchService, MOMENTUM_LOWVOL_FEATURES, MOMENTUM_LOWVOL_BATCH_FEATURES,
+)
+from app.services.pead_factor import PEADFactor, PEAD_FEATURES
+from app.services.short_interest_factor import ShortInterestService, SHORT_INTEREST_FEATURES
+from app.services.alpha_factor_combiner import AlphaFactorCombiner, ALPHA_COMBO_FEATURES
 
 logger = logging.getLogger(__name__)
 
-FEATURE_SET_VERSION = "v3"  # bumped: added free_cashflow, net_income_growth
+FEATURE_SET_VERSION = "v5"  # bumped: alpha factors (momentum+lowvol, PEAD, short interest)
 
 TECHNICAL_FEATURES = [
     "rsi_14", "macd", "macd_signal", "macd_hist",
@@ -48,6 +59,8 @@ FINANCIAL_FEATURES = [
     "roe", "roa", "revenue_growth", "earnings_growth",
     "debt_to_equity", "current_ratio", "beta",
     "free_cashflow", "net_income_growth",
+    "erm_score",          # earnings revision momentum (analyst EPS revision)
+    "forward_pe_change",  # forward PE vs 3 months ago (valuation momentum)
 ]
 
 MACRO_FEATURES = [
@@ -81,7 +94,13 @@ NEWS_FEATURES = [
     "news_analyst_flag", "news_mgmt_flag", "news_recency_impact",
 ]
 
-ALL_FEATURES = TECHNICAL_FEATURES + FINANCIAL_FEATURES + MACRO_FEATURES + NEWS_FEATURES + SOCIAL_FEATURES + VALUATION_PERCENTILE_FEATURES
+ALL_FEATURES = (
+    TECHNICAL_FEATURES + FINANCIAL_FEATURES + MACRO_FEATURES
+    + NEWS_FEATURES + SOCIAL_FEATURES + VALUATION_PERCENTILE_FEATURES
+    + BEHAVIORAL_FEATURES + PRICE_NLP_FEATURES
+    + MOMENTUM_LOWVOL_FEATURES + MOMENTUM_LOWVOL_BATCH_FEATURES
+    + PEAD_FEATURES + SHORT_INTEREST_FEATURES + ALPHA_COMBO_FEATURES
+)
 
 TARGET_NAMES = [
     "target_2pct_1w",      # next week return >= 2%
@@ -126,6 +145,28 @@ class FeatureEngineeringService:
         feature_rows = []
         label_rows = []
 
+        # Fit price NLP service once on the full weekly history for this stock
+        _price_nlp = PriceNLPService()
+        if len(weekly_df) >= 20:
+            wr = weekly_df["weekly_return"].dropna()
+            nwr = wr.shift(-1)  # next week returns for training only
+            try:
+                _price_nlp.fit(wr, nwr)
+            except Exception:
+                pass
+
+        # SP500 weekly returns for beta computation (loaded once per stock)
+        _sp500_weekly = MomentumLowVolBatchService(self.session).get_sp500_weekly_returns()
+
+        # PEAD service (reads from pead_signals DB table)
+        _pead_svc = PEADFactor(self.session)
+
+        # Short interest service (reads from short_interest_data DB table)
+        _si_svc = ShortInterestService(self.session)
+
+        # Alpha factor combiner
+        _alpha_combiner = AlphaFactorCombiner()
+
         for i, (week_end, _) in enumerate(weekly_df.iterrows()):
             # Use daily data available BEFORE this week ends
             avail_daily = daily_df[daily_df.index < pd.Timestamp(week_end)]
@@ -153,6 +194,64 @@ class FeatureEngineeringService:
             social_svc = SocialSentimentService(self.session)
             social_features = social_svc.get_weekly_social_features(stock.id, week_end_date)
             features.update(social_features)
+
+            # Behavioral signals (anchoring, disposition, overreaction)
+            avail_weekly = weekly_df[weekly_df.index <= week_end]["weekly_return"]
+            beh_features = compute_all_behavioral(
+                close=avail_daily["close"],
+                weekly_returns=avail_weekly.dropna(),
+            )
+            features.update(beh_features)
+
+            # Price NLP features (SAX + N-gram + embedding)
+            try:
+                avail_wr = weekly_df[weekly_df.index < week_end]["weekly_return"].dropna()
+                nlp_features = _price_nlp.compute(avail_wr)
+                features.update(nlp_features)
+            except Exception:
+                pass
+
+            # Momentum + Low-Vol features (1A + 1B beta + 1C QMJ)
+            try:
+                avail_wr_mlv = weekly_df[weekly_df.index <= week_end]["weekly_return"].dropna()
+                mlv_features = compute_momentum_features(avail_wr_mlv)
+                features.update(mlv_features)
+
+                # Rolling beta (1B) — align SP500 weekly to stock weekly index
+                if not _sp500_weekly.empty:
+                    sp_aligned = _sp500_weekly.reindex(avail_wr_mlv.index, method="ffill")
+                    beta = compute_beta_52w(avail_wr_mlv, sp_aligned)
+                    features["beta_52w"] = beta
+
+                # QMJ (1C) — from already loaded financial features
+                features["qmj_score"] = compute_qmj_score(fin_features)
+            except Exception:
+                pass
+
+            # PEAD features (2A-2E) — reads from pead_signals DB
+            try:
+                week_end_date = week_end.date() if hasattr(week_end, "date") else week_end
+                pead_features = _pead_svc.compute_features(
+                    stock.id, week_end_date, weekly_df
+                )
+                features.update(pead_features)
+            except Exception:
+                pass
+
+            # Short interest features (3A-3B) — reads from short_interest_data DB
+            try:
+                week_end_date = week_end.date() if hasattr(week_end, "date") else week_end
+                si_features = _si_svc.compute_features(stock.id, week_end_date)
+                features.update(si_features)
+            except Exception:
+                pass
+
+            # Alpha factor combiner (4A-4C) — combines all three factors
+            try:
+                alpha_features = _alpha_combiner.compute_features_only(features)
+                features.update(alpha_features)
+            except Exception:
+                pass
 
             for fname, fval in features.items():
                 feature_rows.append({
@@ -448,4 +547,69 @@ class FeatureEngineeringService:
             self.compute_valuation_percentiles_all(tickers)
         except Exception as e:
             logger.error(f"Valuation percentile error: {e}")
+        # Cross-sectional herding scores (batch, after per-stock features)
+        try:
+            self._compute_herding_all(tickers)
+        except Exception as e:
+            logger.error(f"Herding score error: {e}")
+        # Cross-sectional momentum+lowvol normalization (1A Z-scores + 1D ranks)
+        try:
+            MomentumLowVolBatchService(self.session).compute_cross_sectional_all(tickers)
+        except Exception as e:
+            logger.error(f"MomentumLowVol cross-sectional error: {e}")
+        # Cross-sectional short interest sector z-scores (3D)
+        try:
+            ShortInterestService(self.session).compute_cross_sectional_all(tickers)
+        except Exception as e:
+            logger.error(f"ShortInterest cross-sectional error: {e}")
         return results
+
+    def _compute_herding_all(self, tickers: list[str]) -> int:
+        """
+        Compute cross-sectional herding score per week and write back to all stocks.
+
+        Herding is a cross-sectional signal (requires all stocks' returns for each week)
+        so it must be computed in a batch pass after per-stock features.
+        """
+        from app.models.feature import FeatureWeekly
+        stocks = self.session.execute(
+            select(Stock).where(Stock.ticker.in_(tickers))
+        ).scalars().all()
+        stock_by_id = {s.id: s for s in stocks}
+
+        # Load weekly_return feature for all stocks
+        rows = self.session.execute(
+            select(FeatureWeekly).where(
+                FeatureWeekly.stock_id.in_([s.id for s in stocks]),
+                FeatureWeekly.feature_name == "return_1w",
+            )
+        ).scalars().all()
+        if not rows:
+            return 0
+
+        # Build week → {ticker: return} mapping
+        from collections import defaultdict
+        week_returns: dict = defaultdict(dict)
+        for r in rows:
+            ticker = getattr(stock_by_id.get(r.stock_id), "ticker", None)
+            if ticker and r.value is not None:
+                week_returns[r.week_ending][ticker] = r.value
+
+        herding_rows = []
+        for week, ticker_returns in week_returns.items():
+            score = compute_herding_score(ticker_returns)
+            if pd.isna(score):
+                continue
+            for stock in stocks:
+                herding_rows.append({
+                    "stock_id": stock.id,
+                    "week_ending": week,
+                    "feature_name": "herding_score",
+                    "value": float(score),
+                    "feature_set_version": FEATURE_SET_VERSION,
+                })
+
+        if herding_rows:
+            self._upsert_features(herding_rows)
+            logger.info("Herding scores: %d rows across %d weeks", len(herding_rows), len(week_returns))
+        return len(herding_rows)

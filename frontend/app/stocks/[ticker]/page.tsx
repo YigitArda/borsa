@@ -2,6 +2,15 @@ import { api } from "@/lib/api";
 import PriceChart from "@/components/charts/PriceChart";
 import ReturnDistributionChart from "@/components/charts/ReturnDistributionChart";
 
+interface SocialRow {
+  week_ending: string;
+  mention_count: number | null;
+  sentiment_polarity: number | null;
+  mention_momentum: number | null;
+  hype_risk: number | null;
+  abnormal_attention: number | null;
+}
+
 interface StockResearch {
   ticker: string;
   name: string;
@@ -21,6 +30,8 @@ interface StockResearch {
   worst_weeks: { week_ending: string; return: number }[];
   technicals: Record<string, number | null>;
   financials: Record<string, number | null>;
+  behavioral: Record<string, number | null>;
+  social: SocialRow[];
   news: { headline: string; published_at: string; source: string; sentiment_score: number | null; sentiment_label: string }[];
   signals: {
     week_starting: string;
@@ -301,6 +312,85 @@ export default async function StockPage({ params }: { params: { ticker: string }
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Behavioral Signals */}
+      {Object.keys(research.behavioral ?? {}).length > 0 && (
+        <div className="rounded-lg border border-purple-700/40 bg-purple-900/10 p-4">
+          <h2 className="text-lg font-semibold text-purple-300 mb-1">Behavioral Finance Signals</h2>
+          <p className="text-xs text-slate-400 mb-4">Anchoring, disposition, herding & overreaction indicators (latest week)</p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {[
+              { key: "anchor_proximity_high", label: "52w High Proximity", pct: true },
+              { key: "anchor_proximity_low",  label: "52w Low Proximity",  pct: true },
+              { key: "anchor_breakout_signal", label: "Breakout Signal",   pct: false },
+              { key: "disposition_gain_proxy", label: "Gain Proxy",        pct: true },
+              { key: "disposition_selling_risk", label: "Selling Risk",    pct: false },
+              { key: "herding_score",          label: "Herding Score",     pct: true },
+              { key: "overreaction_reversal",  label: "Overreaction Rev.", pct: true },
+              { key: "extreme_move_flag",      label: "Extreme Move",      pct: false },
+              { key: "ngram_bullish_score",    label: "N-gram Bullish",    pct: true },
+              { key: "ngram_bearish_score",    label: "N-gram Bearish",    pct: true },
+              { key: "erm_score",              label: "EPS Revision Mom.", pct: true },
+              { key: "forward_pe_change",      label: "Fwd PE Change",     pct: false },
+            ].map(({ key, label, pct }) => {
+              const val = (research.behavioral ?? {})[key];
+              if (val == null) return null;
+              const isPositive = val > 0;
+              const isNeutral = val === 0;
+              return (
+                <div key={key} className="bg-slate-800/60 rounded p-3 border border-slate-700">
+                  <div className="text-xs text-slate-400 mb-1 truncate">{label}</div>
+                  <div className={`text-sm font-mono font-semibold ${
+                    isNeutral ? "text-slate-300" : isPositive ? "text-green-400" : "text-red-400"
+                  }`}>
+                    {pct ? fmt(val, true, 1) : val.toFixed(2)}
+                  </div>
+                </div>
+              );
+            }).filter(Boolean)}
+          </div>
+        </div>
+      )}
+
+      {/* Social Sentiment */}
+      {(research.social ?? []).length > 0 && (
+        <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
+          <h2 className="text-lg font-semibold text-white mb-4">Social Sentiment (Last 12 Weeks)</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-slate-300">
+              <thead>
+                <tr className="border-b border-slate-700 text-slate-400">
+                  <th className="text-left py-1 pr-3">Week</th>
+                  <th className="text-right py-1 pr-3">Mentions</th>
+                  <th className="text-right py-1 pr-3">Sentiment</th>
+                  <th className="text-right py-1 pr-3">Momentum</th>
+                  <th className="text-right py-1 pr-3">Hype Risk</th>
+                  <th className="text-right py-1">Abnormal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(research.social ?? []).map((s) => (
+                  <tr key={s.week_ending} className="border-b border-slate-800 hover:bg-slate-700/30">
+                    <td className="py-1.5 pr-3 font-mono text-slate-400">{s.week_ending?.slice(0, 10)}</td>
+                    <td className="text-right py-1.5 pr-3">{s.mention_count ?? "—"}</td>
+                    <td className={`text-right py-1.5 pr-3 font-mono ${
+                      (s.sentiment_polarity ?? 0) > 0.1 ? "text-green-400" :
+                      (s.sentiment_polarity ?? 0) < -0.1 ? "text-red-400" : "text-slate-400"
+                    }`}>{s.sentiment_polarity?.toFixed(3) ?? "—"}</td>
+                    <td className={`text-right py-1.5 pr-3 font-mono ${
+                      (s.mention_momentum ?? 0) > 0 ? "text-green-400" : "text-red-400"
+                    }`}>{s.mention_momentum?.toFixed(2) ?? "—"}</td>
+                    <td className={`text-right py-1.5 pr-3 ${
+                      (s.hype_risk ?? 0) > 0.7 ? "text-orange-400 font-semibold" : "text-slate-300"
+                    }`}>{s.hype_risk?.toFixed(2) ?? "—"}</td>
+                    <td className="text-right py-1.5 font-mono">{s.abnormal_attention?.toFixed(2) ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

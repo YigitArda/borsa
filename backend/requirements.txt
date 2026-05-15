@@ -25,6 +25,10 @@ python-dateutil==2.9.0
 
 # NLP / Sentiment
 vaderSentiment==3.3.2
+feedparser==6.0.11
+
+# AI / Research
+anthropic==0.40.0
 
 # Task queue
 celery==5.4.0

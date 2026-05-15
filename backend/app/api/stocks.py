@@ -8,7 +8,7 @@ from app.models.price import PriceWeekly
 from app.models.feature import FeatureWeekly, LabelWeekly
 from app.models.prediction import WeeklyPrediction
 from app.models.financial import FinancialMetric
-from app.models.news import NewsArticle, NewsAnalysis
+from app.models.news import NewsArticle, NewsAnalysis, SocialSentiment
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
 
@@ -339,6 +339,44 @@ async def get_research(ticker: str, db: AsyncSession = Depends(get_db)):
         for s in sig_q.scalars().all()
     ]
 
+    # Social sentiment (last 12 weeks)
+    soc_q = await db.execute(
+        select(SocialSentiment)
+        .where(SocialSentiment.stock_id == stock.id)
+        .order_by(SocialSentiment.week_ending.desc())
+        .limit(12)
+    )
+    social = [
+        {
+            "week_ending": str(s.week_ending),
+            "mention_count": s.mention_count,
+            "sentiment_polarity": s.sentiment_polarity,
+            "mention_momentum": s.mention_momentum,
+            "hype_risk": s.hype_risk,
+            "abnormal_attention": s.abnormal_attention,
+        }
+        for s in soc_q.scalars().all()
+    ]
+
+    # Behavioral + ERM features (latest week)
+    behavioral_keys = [
+        "anchor_proximity_high", "anchor_proximity_low", "anchor_breakout_signal",
+        "disposition_gain_proxy", "disposition_selling_risk",
+        "herding_score", "overreaction_reversal", "extreme_move_flag",
+        "ngram_bullish_score", "ngram_bearish_score",
+        "erm_score", "forward_pe_change",
+    ]
+    behavioral: dict = {}
+    if latest_week:
+        beh_q = await db.execute(
+            select(FeatureWeekly).where(
+                FeatureWeekly.stock_id == stock.id,
+                FeatureWeekly.week_ending == latest_week,
+                FeatureWeekly.feature_name.in_(behavioral_keys),
+            )
+        )
+        behavioral = {r.feature_name: r.value for r in beh_q.scalars().all()}
+
     return {
         "ticker": stock.ticker,
         "name": stock.name,
@@ -358,6 +396,8 @@ async def get_research(ticker: str, db: AsyncSession = Depends(get_db)):
         "worst_weeks": worst_weeks,
         "technicals": technicals,
         "financials": key_financials,
+        "behavioral": behavioral,
+        "social": social,
         "news": news,
         "signals": signals,
     }
