@@ -6,6 +6,8 @@ from app.api.backtest import router as backtest_router
 from app.api.strategies import router as strategies_router
 from app.api.weekly_picks import router as picks_router
 from app.api.pipeline import router as pipeline_router
+from app.api.research import router as research_router
+from app.api.data_quality import router as dq_router
 
 app = FastAPI(title="Borsa Research Engine", version="1.0.0")
 
@@ -21,6 +23,8 @@ app.include_router(backtest_router)
 app.include_router(strategies_router)
 app.include_router(picks_router)
 app.include_router(pipeline_router)
+app.include_router(research_router)
+app.include_router(dq_router)
 
 
 @app.get("/health")

@@ -66,7 +66,9 @@ class StrategyProposer:
             new_config["top_n"] = random.choice([3, 5, 7, 10])
 
         elif mutation_type == "change_model":
-            new_config["model_type"] = random.choice(["lightgbm", "logistic_regression"])
+            new_config["model_type"] = random.choice([
+                "lightgbm", "logistic_regression", "random_forest", "gradient_boosting"
+            ])
 
         return new_config
 

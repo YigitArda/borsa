@@ -14,10 +14,17 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.metrics import precision_score, recall_score, f1_score
 from sklearn.preprocessing import StandardScaler
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+try:
+    from catboost import CatBoostClassifier
+    HAS_CATBOOST = True
+except ImportError:
+    HAS_CATBOOST = False
 
 from app.models.stock import Stock
 from app.models.feature import FeatureWeekly, LabelWeekly
@@ -159,18 +166,31 @@ class ModelTrainer:
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
 
+        pos_weight = (y == 0).sum() / max((y == 1).sum(), 1)
+
         if self.model_type == "lightgbm":
-            pos_weight = (y == 0).sum() / max((y == 1).sum(), 1)
             model = lgb.LGBMClassifier(
-                n_estimators=200,
-                max_depth=4,
-                num_leaves=15,
-                learning_rate=0.05,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                scale_pos_weight=pos_weight,
-                random_state=42,
-                verbose=-1,
+                n_estimators=200, max_depth=4, num_leaves=15,
+                learning_rate=0.05, subsample=0.8, colsample_bytree=0.8,
+                scale_pos_weight=pos_weight, random_state=42, verbose=-1,
+            )
+            model.fit(X_scaled, y)
+        elif self.model_type == "random_forest":
+            model = RandomForestClassifier(
+                n_estimators=200, max_depth=6, min_samples_leaf=10,
+                class_weight="balanced", random_state=42, n_jobs=-1,
+            )
+            model.fit(X_scaled, y)
+        elif self.model_type == "gradient_boosting":
+            model = GradientBoostingClassifier(
+                n_estimators=150, max_depth=3, learning_rate=0.05,
+                subsample=0.8, random_state=42,
+            )
+            model.fit(X_scaled, y)
+        elif self.model_type == "catboost" and HAS_CATBOOST:
+            model = CatBoostClassifier(
+                iterations=200, depth=4, learning_rate=0.05,
+                class_weights=[1, pos_weight], random_seed=42, verbose=0,
             )
             model.fit(X_scaled, y)
         else:  # logistic regression baseline
@@ -230,6 +250,55 @@ class ModelTrainer:
             "open": r.open,
             "close": r.close,
         } for r in rows])
+
+    def get_feature_importance(self, model, feature_cols: list[str]) -> dict[str, float]:
+        """Extract feature importances from the trained model."""
+        try:
+            if hasattr(model, "feature_importances_"):
+                imps = model.feature_importances_
+                total = sum(imps) or 1
+                return {f: float(v / total) for f, v in zip(feature_cols, imps)}
+            elif hasattr(model, "coef_"):
+                imps = abs(model.coef_[0])
+                total = sum(imps) or 1
+                return {f: float(v / total) for f, v in zip(feature_cols, imps)}
+        except Exception:
+            pass
+        return {}
+
+    def train_per_stock(self, tickers: list[str], min_rows: int = 100) -> dict[str, dict]:
+        """Train a separate model for each stock with enough data."""
+        results = {}
+        df = self.load_dataset(tickers)
+        if df.empty:
+            return results
+
+        for ticker in tickers:
+            stock_df = df[df["ticker"] == ticker].sort_values("week_ending")
+            if len(stock_df) < min_rows:
+                logger.info(f"Not enough data for per-stock model: {ticker} ({len(stock_df)} rows)")
+                continue
+
+            split = int(len(stock_df) * 0.8)
+            train = stock_df.iloc[:split]
+            test = stock_df.iloc[split:]
+
+            try:
+                model, scaler = self._train(train)
+                metrics = self._evaluate(model, scaler, test, [ticker])
+                feature_cols = [c for c in self.features if c in train.columns]
+                if not feature_cols:
+                    feature_cols = [c for c in train.columns if c not in ["stock_id", "week_ending", "label", "ticker"]]
+                importance = self.get_feature_importance(model, feature_cols)
+                results[ticker] = {
+                    "metrics": metrics,
+                    "top_features": sorted(importance.items(), key=lambda x: -x[1])[:5],
+                }
+                logger.info(f"Per-stock model {ticker}: sharpe={metrics.get('sharpe')}")
+            except Exception as e:
+                logger.error(f"Per-stock model failed {ticker}: {e}")
+
+        return results
 
     def train_final_model(self, tickers: list[str], train_end: date):
         """Train a single model on all data up to train_end for production use."""

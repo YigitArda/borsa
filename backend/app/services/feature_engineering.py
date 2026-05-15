@@ -14,26 +14,50 @@ from sqlalchemy.orm import Session
 from app.models.stock import Stock
 from app.models.price import PriceDaily, PriceWeekly
 from app.models.feature import FeatureWeekly, LabelWeekly
+from app.services.financial_data import FinancialDataService
+from app.services.macro_data import MacroDataService
+from app.services.news_service import NewsService
 
 logger = logging.getLogger(__name__)
 
-FEATURE_SET_VERSION = "v1"
+FEATURE_SET_VERSION = "v2"  # bumped: now includes financial, macro, news features
 
 TECHNICAL_FEATURES = [
     "rsi_14", "macd", "macd_signal", "macd_hist",
     "sma_20", "sma_50", "sma_200",
     "ema_12", "ema_26",
-    "bb_position",  # (price - lower) / (upper - lower)
+    "bb_position",
     "atr_14",
-    "volume_zscore",  # vs 20-week mean
+    "volume_zscore",
     "return_1w", "return_4w", "return_12w",
-    "high_52w_distance",  # pct below 52w high
-    "low_52w_distance",   # pct above 52w low
-    "trend_strength",     # slope of 20w SMA
+    "high_52w_distance",
+    "low_52w_distance",
+    "trend_strength",
     "price_to_sma50",
     "price_to_sma200",
     "realized_vol",
 ]
+
+FINANCIAL_FEATURES = [
+    "pe_ratio", "forward_pe", "price_to_sales", "price_to_book",
+    "ev_to_ebitda", "gross_margin", "operating_margin", "net_margin",
+    "roe", "roa", "revenue_growth", "earnings_growth",
+    "debt_to_equity", "current_ratio", "beta",
+]
+
+MACRO_FEATURES = [
+    "VIX", "VIX_WEEKLY", "VIX_CHANGE_W", "TNX_10Y",
+    "RISK_ON_SCORE", "sp500_trend_20w", "nasdaq_trend_20w",
+]
+
+NEWS_FEATURES = [
+    "news_sentiment_score", "news_volume",
+    "news_positive_count", "news_negative_count",
+    "news_earnings_flag", "news_legal_flag", "news_product_flag",
+    "news_analyst_flag", "news_mgmt_flag", "news_recency_impact",
+]
+
+ALL_FEATURES = TECHNICAL_FEATURES + FINANCIAL_FEATURES + MACRO_FEATURES + NEWS_FEATURES
 
 TARGET_NAMES = [
     "target_2pct_1w",   # next week return >= 2%
@@ -48,6 +72,19 @@ TARGET_NAMES = [
 class FeatureEngineeringService:
     def __init__(self, session: Session):
         self.session = session
+        self._macro_cache: dict | None = None  # lazily loaded
+
+    def _get_macro_features(self, week_end) -> dict[str, float]:
+        if self._macro_cache is None:
+            macro_svc = MacroDataService(self.session)
+            self._macro_cache = macro_svc.compute_macro_features_weekly()
+        import datetime
+        key = week_end.date() if hasattr(week_end, "date") else week_end
+        # Find closest week <= key
+        candidates = [d for d in self._macro_cache if d <= key]
+        if not candidates:
+            return {}
+        return self._macro_cache[max(candidates)]
 
     def compute_features_for_stock(self, ticker: str) -> int:
         stock = self._get_stock(ticker)
@@ -71,10 +108,26 @@ class FeatureEngineeringService:
                 continue
 
             features = self._compute_technical(avail_daily, weekly_df, week_end)
+
+            # Financial features
+            fin_svc = FinancialDataService(self.session)
+            fin_features = fin_svc.get_financial_features(stock.id, week_end.date() if hasattr(week_end, "date") else week_end)
+            features.update({k: v for k, v in fin_features.items() if k in FINANCIAL_FEATURES})
+
+            # Macro features
+            macro_features = self._get_macro_features(week_end)
+            features.update({k: v for k, v in macro_features.items() if k in MACRO_FEATURES})
+
+            # News features
+            news_svc = NewsService(self.session)
+            week_end_date = week_end.date() if hasattr(week_end, "date") else week_end
+            news_features = news_svc.get_weekly_news_features(stock.id, week_end_date)
+            features.update(news_features)
+
             for fname, fval in features.items():
                 feature_rows.append({
                     "stock_id": stock.id,
-                    "week_ending": week_end.date(),
+                    "week_ending": week_end.date() if hasattr(week_end, "date") else week_end,
                     "feature_name": fname,
                     "value": float(fval) if pd.notna(fval) else None,
                     "feature_set_version": FEATURE_SET_VERSION,

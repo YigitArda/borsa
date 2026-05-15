@@ -11,6 +11,10 @@ const navLinks = [
   { href: "/", label: "Dashboard" },
   { href: "/weekly-picks", label: "Weekly Picks" },
   { href: "/strategy-lab", label: "Strategy Lab" },
+  { href: "/model-comparison", label: "Model Comparison" },
+  { href: "/feature-importance", label: "Feature Importance" },
+  { href: "/risk-warnings", label: "Risk Warnings" },
+  { href: "/data-quality", label: "Data Quality" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

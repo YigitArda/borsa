@@ -52,9 +52,50 @@ def run_research_loop(self, n_iterations: int = 5, base_strategy_id: int | None 
         session.close()
 
 
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_macro")
+def ingest_macro(self, start: str = "2010-01-01"):
+    from app.services.macro_data import MacroDataService
+    session = _get_sync_session()
+    try:
+        svc = MacroDataService(session)
+        n = svc.ingest_macro(start=start)
+        return {"status": "ok", "rows": n}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_news")
+def ingest_news(self, tickers: list[str] | None = None):
+    from app.services.news_service import NewsService
+    session = _get_sync_session()
+    try:
+        svc = NewsService(session)
+        tickers = tickers or settings.mvp_tickers
+        results = svc.run_all(tickers)
+        return {"status": "ok", "results": results}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_financials")
+def ingest_financials(self, tickers: list[str] | None = None):
+    from app.services.financial_data import FinancialDataService
+    session = _get_sync_session()
+    try:
+        svc = FinancialDataService(session)
+        tickers = tickers or settings.mvp_tickers
+        results = svc.run_all(tickers)
+        return {"status": "ok", "results": results}
+    finally:
+        session.close()
+
+
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.run_full_pipeline")
 def run_full_pipeline(self):
-    """Full weekly pipeline: ingest → features → research."""
+    """Full weekly pipeline: ingest → macro → news → financials → features → research."""
     ingest_prices.delay()
+    ingest_macro.delay()
+    ingest_news.delay()
+    ingest_financials.delay()
     compute_features.delay()
     return {"status": "scheduled"}

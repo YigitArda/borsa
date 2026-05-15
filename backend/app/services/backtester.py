@@ -93,6 +93,12 @@ class BacktestResult:
         final = float(self.equity_curve.iloc[-1])
         return float(final ** (1 / years) - 1) if years > 0 and final > 0 else 0.0
 
+    @property
+    def calmar(self) -> float:
+        """CAGR / abs(max drawdown)."""
+        dd = abs(self.max_drawdown)
+        return float(self.cagr / dd) if dd > 0 else 0.0
+
     def to_dict(self) -> dict:
         return {
             "n_trades": self.n_trades,
@@ -100,6 +106,7 @@ class BacktestResult:
             "avg_return": round(self.avg_return, 4),
             "sharpe": round(self.sharpe, 4),
             "sortino": round(self.sortino, 4),
+            "calmar": round(self.calmar, 4),
             "max_drawdown": round(self.max_drawdown, 4),
             "profit_factor": round(self.profit_factor, 4) if self.profit_factor != float("inf") else 99.0,
             "cagr": round(self.cagr, 4),
