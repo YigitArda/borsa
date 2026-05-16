@@ -44,7 +44,8 @@ def test_paper_trading_opens_and_evaluates_prediction():
 
     svc = PaperTradingService(session)
     assert svc.open_from_predictions(week_starting=date(2026, 5, 11)) == 1
-    assert svc.open_from_predictions(week_starting=date(2026, 5, 11)) == 0
+    assert svc.open_from_predictions(week_starting=date(2026, 5, 11)) == 1
+    assert session.query(PaperTrade).count() == 1
 
     summary = svc.evaluate_open_positions(as_of=date(2026, 5, 18))
     trade = session.query(PaperTrade).one()

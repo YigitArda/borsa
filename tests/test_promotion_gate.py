@@ -19,12 +19,7 @@ def _session():
     return sessionmaker(bind=engine)()
 
 
-def test_promotion_requires_paper_forward_results():
-    session = _session()
-    settings.min_paper_trades_for_promotion = 2
-    settings.min_paper_hit_rate_2pct = 0.45
-    settings.max_paper_calibration_error_2pct = 0.20
-
+def _seed_candidate(session):
     stock = Stock(ticker="MSFT")
     strategy = Strategy(
         name="candidate",
@@ -66,9 +61,15 @@ def test_promotion_requires_paper_forward_results():
             week_starting=date(2026, 5, 11),
             stock_id=stock.id,
             strategy_id=strategy.id,
+            entry_date=date(2026, 5, 11),
             planned_exit_date=date(2026, 5, 15),
+            exit_date=date(2026, 5, 15),
             prob_2pct=0.55,
+            entry_price=100.0,
+            exit_price=103.0,
             realized_return=0.03,
+            max_rise_in_period=0.04,
+            max_drawdown_in_period=-0.01,
             hit_2pct=True,
             hit_3pct=True,
             hit_loss_2pct=False,
@@ -79,9 +80,15 @@ def test_promotion_requires_paper_forward_results():
             week_starting=date(2026, 5, 18),
             stock_id=stock.id,
             strategy_id=strategy.id,
+            entry_date=date(2026, 5, 18),
             planned_exit_date=date(2026, 5, 22),
+            exit_date=date(2026, 5, 22),
             prob_2pct=0.55,
+            entry_price=100.0,
+            exit_price=101.0,
             realized_return=0.01,
+            max_rise_in_period=0.02,
+            max_drawdown_in_period=-0.02,
             hit_2pct=False,
             hit_3pct=False,
             hit_loss_2pct=False,
@@ -89,9 +96,51 @@ def test_promotion_requires_paper_forward_results():
         ),
     ])
     session.commit()
+    return strategy
+
+
+def test_promotion_requires_paper_forward_results(monkeypatch):
+    session = _session()
+    settings.min_paper_trades_for_promotion = 2
+    settings.min_paper_hit_rate_2pct = 0.45
+    settings.max_paper_calibration_error_2pct = 0.20
+
+    strategy = _seed_candidate(session)
+
+    class _GoodHoldoutValidator:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def evaluate_on_holdout(self, *args, **kwargs):
+            return {"holdout_metrics": {"sharpe": 0.8}}
+
+    monkeypatch.setattr("app.services.model_training.HoldoutValidator", _GoodHoldoutValidator)
 
     passed, summary = PromotionGate(session).evaluate(strategy.id)
 
     assert passed is True
     assert summary["paper"]["closed"] == 2
     assert summary["paper"]["hit_rate_2pct"] == 0.5
+
+
+def test_promotion_fails_closed_when_holdout_validation_errors(monkeypatch):
+    session = _session()
+    settings.min_paper_trades_for_promotion = 2
+    settings.min_paper_hit_rate_2pct = 0.45
+    settings.max_paper_calibration_error_2pct = 0.20
+
+    strategy = _seed_candidate(session)
+
+    class _BrokenHoldoutValidator:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def evaluate_on_holdout(self, *args, **kwargs):
+            raise RuntimeError("holdout unavailable")
+
+    monkeypatch.setattr("app.services.model_training.HoldoutValidator", _BrokenHoldoutValidator)
+
+    passed, summary = PromotionGate(session).evaluate(strategy.id)
+
+    assert passed is False
+    assert "holdout validation failed" in summary["reason"]

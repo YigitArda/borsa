@@ -29,6 +29,7 @@ from app.services.kill_switch import KillSwitchMonitor
 from app.services.strategy_bandit import StrategyBandit
 
 logger = logging.getLogger(__name__)
+_SHAP_WARNING_EMITTED = False
 
 
 def _train_risk_model(train_df: pd.DataFrame, feature_cols: list[str]):
@@ -84,8 +85,13 @@ def _build_signal_summary(feature_cols: list[str], feature_values: np.ndarray, m
             direction = "+" if shap_vals[idx] > 0 else "-"
             parts.append(f"{direction}{fname}={fval}")
         return ", ".join(parts)
-    except Exception:
-        pass
+    except Exception as exc:
+        global _SHAP_WARNING_EMITTED
+        if not _SHAP_WARNING_EMITTED:
+            logger.warning("SHAP summary unavailable; falling back to coefficient summary: %s", exc)
+            _SHAP_WARNING_EMITTED = True
+        else:
+            logger.debug("SHAP summary unavailable; falling back to coefficient summary: %s", exc)
 
     # Fallback — lineer modeller için katsayı bazlı
     try:
@@ -108,8 +114,8 @@ def _build_signal_summary(feature_cols: list[str], feature_values: np.ndarray, m
                 fval = feature_values[idx]
                 parts.append(f"{fname}={fval:.2f}")
             return ", ".join(parts)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Prediction summary fallback failed: %s", exc)
 
     return ""
 

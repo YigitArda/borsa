@@ -106,8 +106,14 @@ class FinancialDataService:
                         "is_ttm": True,
                         "data_source": "yfinance",
                     })
-                except (TypeError, ValueError):
-                    pass
+                except (TypeError, ValueError) as exc:
+                    logger.warning(
+                        "Skipping non-numeric financial metric %s for %s: %r (%s)",
+                        metric_name,
+                        ticker,
+                        val,
+                        exc,
+                    )
 
         # ERM: Earnings Revision Momentum
         # Compare current forward EPS estimate vs prior quarter estimate

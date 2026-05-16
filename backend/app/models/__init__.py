@@ -25,6 +25,7 @@ from app.models.rl_agent_qtable import RLAgentQTable
 from app.models.research_budget import ResearchTrialBudget
 from app.models.pead_signal import PEADSignal
 from app.models.short_interest import ShortInterestData
+from app.models.arxiv_paper import ArxivPaper, ResearchInsight
 
 __all__ = [
     "Stock", "StockUniverseSnapshot", "TickerAlias", "CorporateAction",
@@ -54,4 +55,6 @@ __all__ = [
     "ResearchTrialBudget",
     "PEADSignal",
     "ShortInterestData",
+    "ArxivPaper",
+    "ResearchInsight",
 ]

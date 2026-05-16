@@ -79,11 +79,11 @@ type DataStatusSummary = {
   system_status: StatusRow[];
 };
 
-function statusClasses(status: string) {
-  if (status === "Aktif") return "bg-green-500/10 text-green-300 border-green-700/40";
-  if (status === "Kismi") return "bg-yellow-500/10 text-yellow-300 border-yellow-700/40";
-  if (status === "Pasif") return "bg-red-500/10 text-red-300 border-red-700/40";
-  return "bg-slate-500/10 text-slate-300 border-slate-600";
+function statusBadge(status: string) {
+  if (status === "Aktif" || status === "ok") return "badge-success";
+  if (status === "Kismi" || status === "partial" || status === "warning") return "badge-warning";
+  if (status === "Pasif" || status === "error") return "badge-danger";
+  return "badge-info";
 }
 
 export default async function DataStatusPage() {
@@ -95,64 +95,52 @@ export default async function DataStatusPage() {
   const generatedAt = summary ? new Date(summary.generated_at).toLocaleString("tr-TR") : null;
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-white mb-1">Veri Durumu Raporu</h1>
-        <p className="text-slate-400 text-sm">
-          Sistemdeki veri kaynakları, kapsam ve çalışma durumu tek bir backend özetinden okunur.
-        </p>
-      </div>
+    <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
+      <h1>Veri Durumu Raporu</h1>
+      <p style={{ marginBottom: "10px", color: "#666", fontSize: "11px" }}>
+        Sistem veri kaynaklari, kapsam ve calisma durumu tek bir backend ozetinden okunur.
+      </p>
 
       {compatibilityMode && (
-        <div className="rounded-lg border border-yellow-700/40 bg-yellow-900/10 p-4 text-sm text-yellow-300">
-          Backend bu ortamda <code>/data-quality/summary</code> endpointini sunmuyor. Uyumluluk modu olarak
-          <code> /data-quality</code> raporu gösteriliyor.
+        <div className="alert alert-warning">
+          Backend bu ortamda <code>/data-quality/summary</code> endpointini sunmuyor. Uyumluluk modu olarak{" "}
+          <code>/data-quality</code> raporu gosteriliyor.
         </div>
       )}
 
       {summaryResult.error && !report && (
-        <div className="rounded-lg border border-red-700/40 bg-red-900/10 p-4 text-sm text-red-300">
-          Veri özeti yüklenemedi: {summaryResult.error}
-        </div>
+        <div className="alert alert-danger">Veri ozeti yuklenemedi: {summaryResult.error}</div>
       )}
 
       {summary ? (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-            <StatCard label="Aktif Hisse" value={summary.stock_count} />
-            <StatCard label="Fiyat Kayıtları" value={summary.price_coverage.total_rows} />
-            <StatCard label="Feature Kayıtları" value={summary.feature_coverage.total_rows} />
-            <StatCard label="Label Kayıtları" value={summary.label_coverage.total_rows} />
-            <StatCard label="Veri Kaynağı" value={summary.data_sources.length} />
-          </div>
+          <StatGrid
+            items={[
+              { label: "Aktif Hisse", value: summary.stock_count },
+              { label: "Fiyat Kayitlari", value: summary.price_coverage.total_rows },
+              { label: "Feature Kayitlari", value: summary.feature_coverage.total_rows },
+              { label: "Label Kayitlari", value: summary.label_coverage.total_rows },
+              { label: "Veri Kaynagi", value: summary.data_sources.length },
+            ]}
+          />
 
-          <div className="rounded-lg border border-slate-700 bg-slate-800 p-4 text-sm text-slate-300">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-xs uppercase tracking-wide text-slate-500">Son güncelleme</div>
-                <div className="text-white font-medium">{generatedAt ?? "Bilinmiyor"}</div>
-              </div>
-              <div>
-                <div className="text-xs uppercase tracking-wide text-slate-500">Fiyat aralığı</div>
-                <div className="text-white font-medium">
-                  {summary.price_coverage.range_start ?? "N/A"} - {summary.price_coverage.range_end ?? "N/A"}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs uppercase tracking-wide text-slate-500">Feature aileleri</div>
-                <div className="text-white font-medium">{summary.feature_coverage.categories.length}</div>
-              </div>
-            </div>
-          </div>
+          <InfoStrip
+            leftLabel="Son guncelleme"
+            leftValue={generatedAt ?? "Bilinmiyor"}
+            middleLabel="Fiyat araligi"
+            middleValue={`${summary.price_coverage.range_start ?? "N/A"} - ${summary.price_coverage.range_end ?? "N/A"}`}
+            rightLabel="Feature aileleri"
+            rightValue={summary.feature_coverage.categories.length.toString()}
+          />
 
-          <Section title="Veri Kaynakları ve Durumları">
+          <Section title="Veri Kaynaklari ve Durumlari">
             <DataTable
-              headers={["Veri Tipi", "Kaynak", "Periyot", "Tarih Aralığı", "Toplam Kayıt", "Kapsam", "Durum"]}
+              headers={["Veri Tipi", "Kaynak", "Periyot", "Tarih Araligi", "Toplam Kayit", "Kapsam", "Durum"]}
               rows={summary.data_sources.map((row) => [
                 <strong key={`${row.name}-name`}>{row.name}</strong>,
                 row.source,
                 row.period,
-                <span key={`${row.name}-range`} className="font-mono text-xs">{row.range}</span>,
+                <span key={`${row.name}-range`} style={{ fontFamily: "monospace", fontSize: "10px" }}>{row.range}</span>,
                 row.totalRecords,
                 row.coverage,
                 <Badge key={`${row.name}-status`} status={row.status}>{row.status.toUpperCase()}</Badge>,
@@ -160,9 +148,9 @@ export default async function DataStatusPage() {
             />
           </Section>
 
-          <Section title="Hisse Başına Fiyat Verisi">
+          <Section title="Hisse Bazli Fiyat Verisi">
             <DataTable
-              headers={["#", "Ticker", "Hafta", "Yıl", "Başlangıç", "Bitiş"]}
+              headers={["#", "Ticker", "Hafta", "Yil", "Baslangic", "Bitis"]}
               rows={summary.price_coverage.details.map((row, index) => [
                 index + 1,
                 <strong key={`${row.ticker}-ticker`}>{row.ticker}</strong>,
@@ -176,7 +164,7 @@ export default async function DataStatusPage() {
 
           <Section title="Feature Kategorileri">
             <DataTable
-              headers={["Kategori", "Sayı", "Örnekler"]}
+              headers={["Kategori", "Sayi", "Ornekler"]}
               rows={summary.feature_coverage.categories.map((row) => [
                 <strong key={`${row.category}-category`}>{row.category}</strong>,
                 row.count,
@@ -187,7 +175,7 @@ export default async function DataStatusPage() {
 
           <Section title="Sistem Durumu">
             <DataTable
-              headers={["Bileşen", "Durum", "Detay"]}
+              headers={["Bilesen", "Durum", "Detay"]}
               rows={summary.system_status.map((row) => [
                 <strong key={`${row.name}-name`}>{row.name}</strong>,
                 <Badge key={`${row.name}-status`} status={row.status}>{row.status.toUpperCase()}</Badge>,
@@ -198,76 +186,70 @@ export default async function DataStatusPage() {
         </>
       ) : report ? (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-            <StatCard label="Toplam Hisse" value={report.total_stocks} />
-            <StatCard label="Verisi Olan Hisse" value={report.stocks_with_data} />
-            <StatCard label="Eksik Hisse" value={Math.max(report.total_stocks - report.stocks_with_data, 0)} />
-            <StatCard label="Makro Gösterge" value={Object.keys(report.macro_freshness).length} />
-            <StatCard label="Uyarı Sayısı" value={report.data_quality_gates.warnings.length} />
-          </div>
+          <StatGrid
+            items={[
+              { label: "Toplam Hisse", value: report.total_stocks },
+              { label: "Verisi Olan Hisse", value: report.stocks_with_data },
+              { label: "Eksik Hisse", value: Math.max(report.total_stocks - report.stocks_with_data, 0) },
+              { label: "Makro Gosterge", value: Object.keys(report.macro_freshness).length },
+              { label: "Uyari Sayisi", value: report.data_quality_gates.warnings.length },
+            ]}
+          />
 
-          <div className="rounded-lg border border-slate-700 bg-slate-800 p-4 text-sm text-slate-300">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-xs uppercase tracking-wide text-slate-500">Uyumluluk modu</div>
-                <div className="text-white font-medium">Legacy /data-quality report</div>
-              </div>
-              <div>
-                <div className="text-xs uppercase tracking-wide text-slate-500">Hisse kapsama oranı</div>
-                <div className="text-white font-medium">
-                  {report.total_stocks > 0
-                    ? `${Math.round((report.stocks_with_data / report.total_stocks) * 100)}%`
-                    : "N/A"}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs uppercase tracking-wide text-slate-500">Makro seri sayısı</div>
-                <div className="text-white font-medium">{Object.keys(report.macro_freshness).length}</div>
-              </div>
-            </div>
-          </div>
+          <InfoStrip
+            leftLabel="Uyumluluk modu"
+            leftValue="Legacy /data-quality report"
+            middleLabel="Hisse kapsama orani"
+            middleValue={
+              report.total_stocks > 0
+                ? `${Math.round((report.stocks_with_data / report.total_stocks) * 100)}%`
+                : "N/A"
+            }
+            rightLabel="Makro seri sayisi"
+            rightValue={Object.keys(report.macro_freshness).length.toString()}
+          />
 
-          <Section title="Makro Veri Tazeliği">
+          <Section title="Makro Veri Tazeligi">
             <DataTable
-              headers={["Gösterge", "Son Güncelleme"]}
+              headers={["Gostergeler", "Son Guncelleme"]}
               rows={Object.entries(report.macro_freshness).map(([code, value]) => [
                 <strong key={`${code}-name`}>{code}</strong>,
-                <span key={`${code}-value`} className="font-mono text-xs">{value}</span>,
+                <span key={`${code}-value`} style={{ fontFamily: "monospace", fontSize: "10px" }}>{value}</span>,
               ])}
             />
           </Section>
 
-          <Section title="Veri Kalitesi Kapıları">
+          <Section title="Veri Kalitesi Kapilari">
             <DataTable
-              headers={["Bileşen", "Değer"]}
+              headers={["Bilesen", "Deger"]}
               rows={[
-                ["PIT finansal kayıtları", report.data_quality_gates.pit_financial_rows.toLocaleString()],
-                ["yfinance finansal kayıtları", report.data_quality_gates.yfinance_financial_rows.toLocaleString()],
-                ["Universe snapshot sayısı", report.data_quality_gates.universe_snapshot_count.toLocaleString()],
-                ["Ticker alias sayısı", report.data_quality_gates.ticker_alias_count.toLocaleString()],
-                ["Corporate action sayısı", report.data_quality_gates.corporate_action_count.toLocaleString()],
+                ["PIT finansal kayitlari", report.data_quality_gates.pit_financial_rows.toLocaleString()],
+                ["yfinance finansal kayitlari", report.data_quality_gates.yfinance_financial_rows.toLocaleString()],
+                ["Universe snapshot sayisi", report.data_quality_gates.universe_snapshot_count.toLocaleString()],
+                ["Ticker alias sayisi", report.data_quality_gates.ticker_alias_count.toLocaleString()],
+                ["Corporate action sayisi", report.data_quality_gates.corporate_action_count.toLocaleString()],
               ].map(([label, value]) => [
                 <strong key={`${label}-name`}>{label}</strong>,
                 value,
               ])}
             />
-            <div className="border-t border-slate-700 p-4">
-              <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">Uyarılar</div>
+            <div style={{ borderTop: "1px solid #c0c0c0", padding: "8px" }}>
+              <div className="section-label">Uyarilar</div>
               {report.data_quality_gates.warnings.length > 0 ? (
-                <ul className="list-disc pl-5 space-y-1 text-slate-300 text-sm">
+                <ul style={{ paddingLeft: "18px", lineHeight: 1.6 }}>
                   {report.data_quality_gates.warnings.map((warning) => (
                     <li key={warning}>{warning}</li>
                   ))}
                 </ul>
               ) : (
-                <div className="text-slate-400 text-sm">Uyarı yok.</div>
+                <div className="text-muted">Uyari yok.</div>
               )}
             </div>
           </Section>
 
-          <Section title="Hisse Bazlı Veri Durumu">
+          <Section title="Hisse Bazli Veri Durumu">
             <DataTable
-              headers={["Ticker", "Günlük", "Haftalık", "Feature", "Son Hafta", "Durum"]}
+              headers={["Ticker", "Gunluk", "Haftalik", "Feature", "Son Hafta", "Durum"]}
               rows={report.stocks.map((row) => [
                 <strong key={`${row.ticker}-ticker`}>{row.ticker}</strong>,
                 row.daily_price_rows.toLocaleString(),
@@ -282,13 +264,13 @@ export default async function DataStatusPage() {
           </Section>
         </>
       ) : (
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-6 text-sm text-slate-400">
-          Veri özeti şu anda alınamadı. Backend tekrar çevrimiçi olduğunda bu sayfa otomatik olarak güncellenecek.
+        <div className="alert alert-danger">
+          Veri ozeti su anda alinmadi. Backend tekrar cevrimici oldugunda bu sayfa otomatik olarak guncellenecek.
         </div>
       )}
 
-      <div className="text-center text-[10px] text-slate-500 border border-slate-700 bg-slate-800/60 rounded px-3 py-2">
-        Bu sistem yalnızca araştırma amaçlıdır, yatırım tavsiyesi değildir.
+      <div className="alert alert-info" style={{ marginTop: "12px", textAlign: "center", fontSize: "10px" }}>
+        Bu sistem yalnizca arastirma amaclidir, yatirim tavsiyesi degildir.
       </div>
     </div>
   );
@@ -296,11 +278,11 @@ export default async function DataStatusPage() {
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-lg border border-slate-700 bg-slate-800 overflow-hidden">
-      <div className="px-4 py-3 border-b border-slate-700 bg-slate-900/70 text-sm font-semibold text-white">
-        {title}
+    <section className="box" style={{ marginTop: "12px" }}>
+      <div className="box-head">{title}</div>
+      <div className="box-body" style={{ padding: 0, overflowX: "auto" }}>
+        {children}
       </div>
-      <div className="overflow-x-auto">{children}</div>
     </section>
   );
 }
@@ -313,30 +295,26 @@ function DataTable({
   rows: ReactNode[][];
 }) {
   return (
-    <table className="w-full text-sm">
-      <thead className="bg-slate-900 text-slate-400">
+    <table className="data-table" style={{ marginBottom: 0 }}>
+      <thead>
         <tr>
           {headers.map((header) => (
-            <th key={header} className="px-4 py-3 text-left whitespace-nowrap">
-              {header}
-            </th>
+            <th key={header}>{header}</th>
           ))}
         </tr>
       </thead>
       <tbody>
         {rows.length === 0 ? (
           <tr>
-            <td colSpan={headers.length} className="px-4 py-6 text-slate-400">
-              Veri bulunamadı.
+            <td colSpan={headers.length} style={{ color: "#666" }}>
+              Veri bulunamadi.
             </td>
           </tr>
         ) : (
           rows.map((cells, rowIndex) => (
-            <tr key={rowIndex} className="border-t border-slate-700 hover:bg-slate-700/30">
+            <tr key={rowIndex}>
               {cells.map((cell, cellIndex) => (
-                <td key={cellIndex} className="px-4 py-3 text-slate-300 align-top">
-                  {cell}
-                </td>
+                <td key={cellIndex}>{cell}</td>
               ))}
             </tr>
           ))
@@ -346,20 +324,69 @@ function DataTable({
   );
 }
 
+function StatGrid({ items }: { items: Array<{ label: string; value: number | string }> }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "8px" }}>
+      {items.map((item) => (
+        <StatCard key={item.label} label={item.label} value={item.value} />
+      ))}
+    </div>
+  );
+}
+
 function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-2 text-2xl font-bold text-white">
-        {typeof value === "number" ? value.toLocaleString() : value}
+    <div className="box" style={{ marginBottom: 0 }}>
+      <div className="box-head">{label}</div>
+      <div className="box-body">
+        <div style={{ fontSize: "20px", fontWeight: "bold" }}>
+          {typeof value === "number" ? value.toLocaleString() : value}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function InfoStrip({
+  leftLabel,
+  leftValue,
+  middleLabel,
+  middleValue,
+  rightLabel,
+  rightValue,
+}: {
+  leftLabel: string;
+  leftValue: string;
+  middleLabel: string;
+  middleValue: string;
+  rightLabel: string;
+  rightValue: string;
+}) {
+  return (
+    <div className="box" style={{ marginTop: "12px" }}>
+      <div className="box-body">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "12px" }}>
+          <StripItem label={leftLabel} value={leftValue} />
+          <StripItem label={middleLabel} value={middleValue} />
+          <StripItem label={rightLabel} value={rightValue} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StripItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="section-label">{label}</div>
+      <div style={{ color: "#000", fontWeight: "bold" }}>{value}</div>
     </div>
   );
 }
 
 function reportStockLabel(status: string) {
   if (status === "ok") return "TAMAM";
-  if (status === "insufficient_data") return "EKSİK";
+  if (status === "insufficient_data") return "EKSIK";
   return status.toUpperCase();
 }
 
@@ -376,9 +403,5 @@ function Badge({
   status: string;
   children: ReactNode;
 }) {
-  return (
-    <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold border ${statusClasses(status)}`}>
-      {children}
-    </span>
-  );
+  return <span className={`badge ${statusBadge(status)}`}>{children}</span>;
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 export default function BacktestLandingPage() {
@@ -11,7 +12,7 @@ export default function BacktestLandingPage() {
   function openRun() {
     const id = Number(runId.trim());
     if (!Number.isInteger(id) || id <= 0) {
-      setError("Geçerli bir backtest ID gir.");
+      setError("Gecerli bir backtest ID gir.");
       return;
     }
     setError(null);
@@ -19,60 +20,59 @@ export default function BacktestLandingPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Backtest Merkezi</h1>
-        <p className="text-slate-400 text-sm mt-1">
-          Çalıştırılmış backtest sonuçlarını aç veya yeni bir araştırma için Strategy Lab’e geç.
-        </p>
+    <div style={{ maxWidth: "960px", margin: "0 auto" }}>
+      <h1>Backtest Merkezi</h1>
+      <p style={{ marginBottom: "10px", color: "#666", fontSize: "11px" }}>
+        Calistirilmis backtest sonuclarini ac veya yeni bir research akisi icin Strategy Lab'e gec.
+      </p>
+
+      <div className="alert alert-info">
+        <b>Not:</b> Bu sayfa bir listedeki run'lara baglanmiyor. Dogrudan ID ile aciliyor.
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-4 space-y-3">
-          <h2 className="text-lg font-semibold text-white">Backtest ID ile aç</h2>
-          <p className="text-sm text-slate-400">
-            `backtest/[id]` detay sayfası mevcut. Buraya ID yazıp doğrudan açabilirsin.
-          </p>
-          <div className="flex gap-2">
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
+        <div className="box">
+          <div className="box-head">Backtest ID ile ac</div>
+          <div className="box-body" style={{ display: "grid", gap: "8px" }}>
+            <div style={{ fontSize: "11px", color: "#666" }}>
+              `backtest/[id]` detay sayfasina gitmek icin ID yaz.
+            </div>
             <input
               value={runId}
               onChange={(e) => setRunId(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && openRun()}
               inputMode="numeric"
-              placeholder="Örn. 12"
-              className="flex-1 rounded border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white outline-none"
+              placeholder="Orn. 12"
             />
-            <button
-              onClick={openRun}
-              className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
-            >
-              Aç
-            </button>
+            <div>
+              <button onClick={openRun}>Ac</button>
+            </div>
+            {error && <div className="text-red">{error}</div>}
           </div>
-          {error && <div className="text-sm text-red-400">{error}</div>}
         </div>
 
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-4 space-y-3">
-          <h2 className="text-lg font-semibold text-white">Yeni backtest çalıştır</h2>
-          <p className="text-sm text-slate-400">
-            Parametre seçimi, direct backtest ve research loop için Strategy Lab’i kullan.
-          </p>
-          <a
-            href="/strategy-lab"
-            className="inline-flex rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500"
-          >
-            Strategy Lab’e git
-          </a>
+        <div className="box">
+          <div className="box-head">Yeni backtest calistir</div>
+          <div className="box-body" style={{ display: "grid", gap: "8px" }}>
+            <div style={{ fontSize: "11px", color: "#666" }}>
+              Parametre secimi ve direct backtest icin Strategy Lab'i kullan.
+            </div>
+            <Link href="/strategy-lab" className="btn" prefetch={false}>
+              Strategy Lab'e git
+            </Link>
+          </div>
         </div>
       </div>
 
-      <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-        <h2 className="text-lg font-semibold text-white mb-2">Not</h2>
-        <ul className="text-sm text-slate-400 space-y-1 list-disc pl-5">
-          <li>Bu sayfa sadece rota 404’ünü kapatır.</li>
-          <li>Backtest verisi backend’den <code>GET /backtest/&lt;id&gt;</code> ile gelir.</li>
-          <li>Henüz listeleme endpoint’i yok; bu yüzden direkt ID ile açılıyor.</li>
-        </ul>
+      <div className="box" style={{ marginTop: "12px" }}>
+        <div className="box-head">Bilgi</div>
+        <div className="box-body">
+          <ul style={{ paddingLeft: "18px", lineHeight: 1.6 }}>
+            <li>Bu sayfa sadece rota 404'ünü kapatir.</li>
+            <li>Backtest verisi backend'den <code>GET /backtest/&lt;id&gt;</code> ile gelir.</li>
+            <li>Henuz listeleme endpoint'i yok.</li>
+          </ul>
+        </div>
       </div>
     </div>
   );

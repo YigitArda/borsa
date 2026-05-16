@@ -64,18 +64,9 @@ function fmt(v: number | null | undefined, pct = false, decimals = 2): string {
 }
 
 function sentimentColor(label: string | null) {
-  if (label === "positive") return "text-green-400";
-  if (label === "negative") return "text-red-400";
-  return "text-slate-400";
-}
-
-function MetricCard({ label, value, color }: { label: string; value: string | number; color?: string }) {
-  return (
-    <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-      <div className="text-xs text-slate-400">{label}</div>
-      <div className={`text-xl font-bold mt-1 ${color || "text-white"}`}>{value}</div>
-    </div>
-  );
+  if (label === "positive") return "text-green";
+  if (label === "negative") return "text-red";
+  return "text-muted";
 }
 
 export default async function StockPage({ params }: { params: { ticker: string } }) {
@@ -94,15 +85,15 @@ export default async function StockPage({ params }: { params: { ticker: string }
 
   if (!research) {
     return (
-      <div className="max-w-6xl mx-auto space-y-4">
-        <div className="rounded-lg border border-red-700/40 bg-red-900/10 p-4 text-sm text-red-300">
+      <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
+        <div className="alert alert-danger">
           {researchResult.error || `Stock not found: ${ticker}`}
         </div>
       </div>
     );
   }
 
-  const r = research.risk;
+  const risk = research.risk;
   const technicalItems = [
     { label: "RSI (14)", key: "rsi_14", pct: false },
     { label: "MACD Hist", key: "macd_hist", pct: false },
@@ -142,98 +133,113 @@ export default async function StockPage({ params }: { params: { ticker: string }
   const topGoodWeekFeatures = goodWeekFeatures ? Object.entries(goodWeekFeatures.features).slice(0, 12) : [];
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold text-white">{ticker}</h1>
-        <p className="text-slate-400 mt-1">{research.name} · {research.sector} · {research.industry}</p>
-      </div>
+    <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
+      <h1>{ticker}</h1>
+      <p style={{ marginBottom: "10px", color: "#666", fontSize: "11px" }}>
+        {research.name} · {research.sector} · {research.industry}
+      </p>
 
-      {auxErrors.length > 0 && (
-        <div className="rounded-lg border border-yellow-700/40 bg-yellow-900/10 p-4 text-sm text-yellow-300">
-          {auxErrors.join(" · ")}
-        </div>
-      )}
+      {auxErrors.length > 0 && <div className="alert alert-warning">{auxErrors.join(" · ")}</div>}
 
-      <div className="grid grid-cols-4 gap-4">
-        <MetricCard label="Win Rate" value={fmt(r.win_rate, true)} color={r.win_rate > 0.5 ? "text-green-400" : "text-slate-300"} />
-        <MetricCard label="Avg Weekly Return" value={fmt(r.avg_weekly_return, true)} color={(r.avg_weekly_return || 0) > 0 ? "text-green-400" : "text-red-400"} />
-        <MetricCard label="Annualized Sharpe" value={fmt(r.annualized_sharpe)} color={(r.annualized_sharpe || 0) > 0.5 ? "text-green-400" : "text-yellow-400"} />
-        <MetricCard label="Max Drawdown" value={fmt(r.max_drawdown, true)} color="text-red-400" />
-        <MetricCard label="Weekly Vol" value={fmt(r.weekly_volatility, true)} />
-        <MetricCard label="Skewness" value={fmt(r.skewness)} />
-        <MetricCard label="Total Weeks" value={r.total_weeks?.toString() ?? "-"} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "8px", marginBottom: "12px" }}>
+        <MetricCard label="Win Rate" value={fmt(risk.win_rate, true)} color={risk.win_rate > 0.5 ? "text-green" : "text-red"} />
+        <MetricCard label="Avg Weekly Return" value={fmt(risk.avg_weekly_return, true)} color={risk.avg_weekly_return > 0 ? "text-green" : "text-red"} />
+        <MetricCard label="Annualized Sharpe" value={fmt(risk.annualized_sharpe)} color={risk.annualized_sharpe > 0.5 ? "text-green" : "text-red"} />
+        <MetricCard label="Max Drawdown" value={fmt(risk.max_drawdown, true)} color="text-red" />
+        <MetricCard label="Weekly Vol" value={fmt(risk.weekly_volatility, true)} />
+        <MetricCard label="Skewness" value={fmt(risk.skewness)} />
+        <MetricCard label="Total Weeks" value={risk.total_weeks.toString()} />
+        <MetricCard label="Ticker" value={research.ticker} />
       </div>
 
       {prices.length > 0 && (
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-          <h2 className="text-lg font-semibold text-white mb-4">Price History (2 Years)</h2>
-          <PriceChart data={prices} />
+        <div className="box">
+          <div className="box-head">Price History (2 Years)</div>
+          <div className="box-body">
+            <PriceChart data={prices} />
+          </div>
         </div>
       )}
 
       {research.distribution.length > 0 && (
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-          <h2 className="text-lg font-semibold text-white mb-4">Weekly Return Distribution</h2>
-          <ReturnDistributionChart data={research.distribution} />
+        <div className="box" style={{ marginTop: "12px" }}>
+          <div className="box-head">Weekly Return Distribution</div>
+          <div className="box-body">
+            <ReturnDistributionChart data={research.distribution} />
+          </div>
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-6">
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-          <h2 className="text-base font-semibold text-green-400 mb-3">Top 10 Best Weeks</h2>
-          <table className="w-full text-sm">
-            <thead><tr className="text-slate-400 text-xs"><th className="text-left pb-2">Week</th><th className="text-right pb-2">Return</th></tr></thead>
-            <tbody>
-              {research.best_weeks.map((w) => (
-                <tr key={w.week_ending} className="border-t border-slate-700">
-                  <td className="py-1.5 text-slate-300 font-mono text-xs">{w.week_ending}</td>
-                  <td className="py-1.5 text-right text-green-400 font-mono">{fmt(w.return, true)}</td>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px", marginTop: "12px" }}>
+        <div className="box">
+          <div className="box-head">Top 10 Best Weeks</div>
+          <div className="box-body" style={{ padding: 0 }}>
+            <table className="data-table" style={{ marginBottom: 0 }}>
+              <thead>
+                <tr>
+                  <th>Week</th>
+                  <th>Return</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {research.best_weeks.map((week) => (
+                  <tr key={week.week_ending}>
+                    <td style={{ fontFamily: "monospace", fontSize: "10px" }}>{week.week_ending}</td>
+                    <td className="text-green">{fmt(week.return, true)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
 
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-          <h2 className="text-base font-semibold text-red-400 mb-3">Top 10 Worst Weeks</h2>
-          <table className="w-full text-sm">
-            <thead><tr className="text-slate-400 text-xs"><th className="text-left pb-2">Week</th><th className="text-right pb-2">Return</th></tr></thead>
-            <tbody>
-              {research.worst_weeks.map((w) => (
-                <tr key={w.week_ending} className="border-t border-slate-700">
-                  <td className="py-1.5 text-slate-300 font-mono text-xs">{w.week_ending}</td>
-                  <td className="py-1.5 text-right text-red-400 font-mono">{fmt(w.return, true)}</td>
+        <div className="box">
+          <div className="box-head">Top 10 Worst Weeks</div>
+          <div className="box-body" style={{ padding: 0 }}>
+            <table className="data-table" style={{ marginBottom: 0 }}>
+              <thead>
+                <tr>
+                  <th>Week</th>
+                  <th>Return</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {research.worst_weeks.map((week) => (
+                  <tr key={week.week_ending}>
+                    <td style={{ fontFamily: "monospace", fontSize: "10px" }}>{week.week_ending}</td>
+                    <td className="text-red">{fmt(week.return, true)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
       {topGoodWeekFeatures.length > 0 && goodWeekFeatures && (
-        <div className="rounded-lg border border-teal-700/40 bg-teal-900/10 p-4">
-          <h2 className="text-lg font-semibold text-teal-300 mb-1">Common Features in Good Entry Weeks (&gt;=2%)</h2>
-          <p className="text-xs text-slate-400 mb-4">
-            Top features that differ most between winning weeks ({goodWeekFeatures.n_good}) and losing weeks ({goodWeekFeatures.n_bad}).
-          </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-slate-300">
+        <div className="box" style={{ marginTop: "12px" }}>
+          <div className="box-head">Common Features in Good Entry Weeks (&gt;=2%)</div>
+          <div className="box-body">
+            <p style={{ fontSize: "10px", color: "#666", marginBottom: "8px" }}>
+              Top features that differ most between winning weeks ({goodWeekFeatures.n_good}) and losing weeks ({goodWeekFeatures.n_bad}).
+            </p>
+            <table className="data-table">
               <thead>
-                <tr className="border-b border-slate-700 text-slate-400">
-                  <th className="text-left py-1 pr-4">Feature</th>
-                  <th className="text-right py-1 pr-4">Good Weeks Avg</th>
-                  <th className="text-right py-1 pr-4">Bad Weeks Avg</th>
-                  <th className="text-right py-1">Difference</th>
+                <tr>
+                  <th>Feature</th>
+                  <th>Good Weeks Avg</th>
+                  <th>Bad Weeks Avg</th>
+                  <th>Difference</th>
                 </tr>
               </thead>
               <tbody>
-                {topGoodWeekFeatures.map(([fname, vals]) => (
-                  <tr key={fname} className="border-b border-slate-800">
-                    <td className="py-1.5 pr-4 font-mono text-teal-400">{fname}</td>
-                    <td className="text-right py-1.5 pr-4">{vals.good_avg?.toFixed(3) ?? "-"}</td>
-                    <td className="text-right py-1.5 pr-4">{vals.bad_avg?.toFixed(3) ?? "-"}</td>
-                    <td className={`text-right py-1.5 font-mono ${(vals.diff ?? 0) > 0 ? "text-green-400" : "text-red-400"}`}>
-                      {vals.diff != null ? (vals.diff > 0 ? "+" : "") + vals.diff.toFixed(3) : "-"}
+                {topGoodWeekFeatures.map(([name, values]) => (
+                  <tr key={name}>
+                    <td style={{ fontFamily: "monospace", color: "#336699" }}>{name}</td>
+                    <td>{values.good_avg?.toFixed(3) ?? "-"}</td>
+                    <td>{values.bad_avg?.toFixed(3) ?? "-"}</td>
+                    <td className={tone(values.diff)}>
+                      {values.diff != null ? (values.diff > 0 ? "+" : "") + values.diff.toFixed(3) : "-"}
                     </td>
                   </tr>
                 ))}
@@ -243,144 +249,143 @@ export default async function StockPage({ params }: { params: { ticker: string }
         </div>
       )}
 
-      <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-        <h2 className="text-lg font-semibold text-white mb-4">Latest Technical Indicators</h2>
-        <div className="grid grid-cols-5 gap-3">
-          {technicalItems.map(({ label, key, pct }) => {
-            const val = research.technicals[key];
-            return (
-              <div key={key} className="bg-slate-700/50 rounded p-3">
-                <div className="text-xs text-slate-400 mb-1">{label}</div>
-                <div className="text-sm font-mono text-white">{fmt(val, pct)}</div>
-              </div>
-            );
-          })}
+      <div className="box" style={{ marginTop: "12px" }}>
+        <div className="box-head">Latest Technical Indicators</div>
+        <div className="box-body">
+          <MetricGrid
+            items={technicalItems.map(({ label, key, pct }) => ({
+              label,
+              value: fmt(research.technicals[key], pct),
+              pct,
+            }))}
+          />
         </div>
       </div>
 
-      <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-        <h2 className="text-lg font-semibold text-white mb-4">Financial Metrics</h2>
-        <div className="grid grid-cols-5 gap-3">
-          {financialItems.map(({ label, key, pct }) => {
-            const val = research.financials[key];
-            return (
-              <div key={key} className="bg-slate-700/50 rounded p-3">
-                <div className="text-xs text-slate-400 mb-1">{label}</div>
-                <div className="text-sm font-mono text-white">{fmt(val, pct)}</div>
-              </div>
-            );
-          })}
+      <div className="box" style={{ marginTop: "12px" }}>
+        <div className="box-head">Financial Metrics</div>
+        <div className="box-body">
+          <MetricGrid
+            items={financialItems.map(({ label, key, pct }) => ({
+              label,
+              value: fmt(research.financials[key], pct),
+              pct,
+            }))}
+          />
         </div>
       </div>
 
       {research.signals.length > 0 && (
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-          <h2 className="text-lg font-semibold text-white mb-4">Signal History (Last 12 Weeks)</h2>
-          <div className="space-y-2">
-            {research.signals.map((s) => (
-              <div key={s.week_starting} className="space-y-1">
-                <div className="flex items-center gap-4">
-                  <span className="text-xs font-mono text-slate-400 w-28">{s.week_starting}</span>
-                  <div className="flex-1 bg-slate-700 rounded-full h-2">
-                    <div
-                      className="bg-blue-500 rounded-full h-2 transition-all"
-                      style={{ width: `${((s.prob_2pct ?? 0) * 100).toFixed(0)}%` }}
-                    />
-                  </div>
-                  <span className="text-xs font-mono text-blue-400 w-12">{fmt(s.prob_2pct, true, 1)}</span>
-                  {s.prob_loss_2pct != null && (
-                    <span className="text-xs font-mono text-red-400 w-12">v{fmt(s.prob_loss_2pct, true, 1)}</span>
-                  )}
-                  {s.expected_return != null && (
-                    <span className={`text-xs font-mono w-14 ${s.expected_return > 0 ? "text-green-400" : "text-red-400"}`}>
-                      E[r]={fmt(s.expected_return, true, 1)}
-                    </span>
-                  )}
-                  <span className={`text-xs px-1.5 py-0.5 rounded ${
-                    s.confidence === "high" ? "bg-green-700 text-green-200" :
-                    s.confidence === "medium" ? "bg-yellow-700 text-yellow-200" :
-                    "bg-slate-700 text-slate-300"
-                  }`}>{s.confidence ?? "-"}</span>
-                  {s.rank != null && <span className="text-xs text-slate-500">#{s.rank}</span>}
-                </div>
-                {s.signal_summary && (
-                  <div className="text-xs text-slate-500 font-mono pl-32">{s.signal_summary}</div>
-                )}
-              </div>
-            ))}
+        <div className="box" style={{ marginTop: "12px" }}>
+          <div className="box-head">Signal History (Last 12 Weeks)</div>
+          <div className="box-body">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Week</th>
+                  <th>Signal</th>
+                  <th>Loss Prob</th>
+                  <th>Expected</th>
+                  <th>Confidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                {research.signals.map((signal) => (
+                  <tr key={signal.week_starting}>
+                    <td style={{ fontFamily: "monospace", fontSize: "10px" }}>{signal.week_starting}</td>
+                    <td>
+                      <div style={{ width: "220px", background: "#d4d0c8", border: "1px solid #999" }}>
+                        <div
+                          style={{
+                            width: `${((signal.prob_2pct ?? 0) * 100).toFixed(0)}%`,
+                            height: "10px",
+                            background: "linear-gradient(to right, #336699, #6699cc)",
+                          }}
+                        />
+                      </div>
+                      <div style={{ fontSize: "10px", color: "#666", marginTop: "2px" }}>
+                        {fmt(signal.prob_2pct, true, 1)}
+                      </div>
+                    </td>
+                    <td className="text-red">{fmt(signal.prob_loss_2pct, true, 1)}</td>
+                    <td className={tone(signal.expected_return)}>{fmt(signal.expected_return, true, 1)}</td>
+                    <td>
+                      <span className={`badge ${confidenceBadge(signal.confidence)}`}>{signal.confidence ?? "-"}</span>
+                      {signal.rank != null && <span style={{ marginLeft: "6px", color: "#666", fontSize: "10px" }}>#{signal.rank}</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ marginTop: "8px", fontSize: "10px", color: "#666" }}>
+              Signal summary entries are shown as live labels when available.
+            </div>
           </div>
         </div>
       )}
 
       {Object.keys(research.behavioral ?? {}).length > 0 && (
-        <div className="rounded-lg border border-purple-700/40 bg-purple-900/10 p-4">
-          <h2 className="text-lg font-semibold text-purple-300 mb-1">Behavioral Finance Signals</h2>
-          <p className="text-xs text-slate-400 mb-4">Anchoring, disposition, herding and overreaction indicators (latest week)</p>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {[
-              { key: "anchor_proximity_high", label: "52w High Proximity", pct: true },
-              { key: "anchor_proximity_low", label: "52w Low Proximity", pct: true },
-              { key: "anchor_breakout_signal", label: "Breakout Signal", pct: false },
-              { key: "disposition_gain_proxy", label: "Gain Proxy", pct: true },
-              { key: "disposition_selling_risk", label: "Selling Risk", pct: false },
-              { key: "herding_score", label: "Herding Score", pct: true },
-              { key: "overreaction_reversal", label: "Overreaction Rev.", pct: true },
-              { key: "extreme_move_flag", label: "Extreme Move", pct: false },
-              { key: "ngram_bullish_score", label: "N-gram Bullish", pct: true },
-              { key: "ngram_bearish_score", label: "N-gram Bearish", pct: true },
-              { key: "erm_score", label: "EPS Revision Mom.", pct: true },
-              { key: "forward_pe_change", label: "Fwd PE Change", pct: false },
-            ].map(({ key, label, pct }) => {
-              const val = (research.behavioral ?? {})[key];
-              if (val == null) return null;
-              const isPositive = val > 0;
-              const isNeutral = val === 0;
-              return (
-                <div key={key} className="bg-slate-800/60 rounded p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400 mb-1 truncate">{label}</div>
-                  <div className={`text-sm font-mono font-semibold ${
-                    isNeutral ? "text-slate-300" : isPositive ? "text-green-400" : "text-red-400"
-                  }`}>
-                    {pct ? fmt(val, true, 1) : val.toFixed(2)}
-                  </div>
-                </div>
-              );
-            }).filter(Boolean)}
+        <div className="box" style={{ marginTop: "12px" }}>
+          <div className="box-head">Behavioral Finance Signals</div>
+          <div className="box-body">
+            <MetricGrid
+              items={[
+                { key: "anchor_proximity_high", label: "52w High Proximity", pct: true },
+                { key: "anchor_proximity_low", label: "52w Low Proximity", pct: true },
+                { key: "anchor_breakout_signal", label: "Breakout Signal", pct: false },
+                { key: "disposition_gain_proxy", label: "Gain Proxy", pct: true },
+                { key: "disposition_selling_risk", label: "Selling Risk", pct: false },
+                { key: "herding_score", label: "Herding Score", pct: true },
+                { key: "overreaction_reversal", label: "Overreaction Rev.", pct: true },
+                { key: "extreme_move_flag", label: "Extreme Move", pct: false },
+                { key: "ngram_bullish_score", label: "N-gram Bullish", pct: true },
+                { key: "ngram_bearish_score", label: "N-gram Bearish", pct: true },
+                { key: "erm_score", label: "EPS Revision Mom.", pct: true },
+                { key: "forward_pe_change", label: "Fwd PE Change", pct: false },
+              ]
+                .map(({ key, label, pct }) => {
+                  const value = (research.behavioral ?? {})[key];
+                  if (value == null) return null;
+                  return {
+                    label,
+                    value: pct ? fmt(value, true, 1) : value.toFixed(2),
+                    tone: value > 0 ? "text-green" : value < 0 ? "text-red" : "text-muted",
+                  };
+                })
+                .filter(Boolean) as Array<{ label: string; value: string; tone: string }>}
+            />
           </div>
         </div>
       )}
 
       {(research.social ?? []).length > 0 && (
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-          <h2 className="text-lg font-semibold text-white mb-4">Social Sentiment (Last 12 Weeks)</h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-slate-300">
+        <div className="box" style={{ marginTop: "12px" }}>
+          <div className="box-head">Social Sentiment (Last 12 Weeks)</div>
+          <div className="box-body" style={{ padding: 0 }}>
+            <table className="data-table" style={{ marginBottom: 0 }}>
               <thead>
-                <tr className="border-b border-slate-700 text-slate-400">
-                  <th className="text-left py-1 pr-3">Week</th>
-                  <th className="text-right py-1 pr-3">Mentions</th>
-                  <th className="text-right py-1 pr-3">Sentiment</th>
-                  <th className="text-right py-1 pr-3">Momentum</th>
-                  <th className="text-right py-1 pr-3">Hype Risk</th>
-                  <th className="text-right py-1">Abnormal</th>
+                <tr>
+                  <th>Week</th>
+                  <th>Mentions</th>
+                  <th>Sentiment</th>
+                  <th>Momentum</th>
+                  <th>Hype Risk</th>
+                  <th>Abnormal</th>
                 </tr>
               </thead>
               <tbody>
-                {(research.social ?? []).map((s) => (
-                  <tr key={s.week_ending} className="border-b border-slate-800 hover:bg-slate-700/30">
-                    <td className="py-1.5 pr-3 font-mono text-slate-400">{s.week_ending?.slice(0, 10)}</td>
-                    <td className="text-right py-1.5 pr-3">{s.mention_count ?? "-"}</td>
-                    <td className={`text-right py-1.5 pr-3 font-mono ${
-                      (s.sentiment_polarity ?? 0) > 0.1 ? "text-green-400" :
-                      (s.sentiment_polarity ?? 0) < -0.1 ? "text-red-400" : "text-slate-400"
-                    }`}>{s.sentiment_polarity?.toFixed(3) ?? "-"}</td>
-                    <td className={`text-right py-1.5 pr-3 font-mono ${
-                      (s.mention_momentum ?? 0) > 0 ? "text-green-400" : "text-red-400"
-                    }`}>{s.mention_momentum?.toFixed(2) ?? "-"}</td>
-                    <td className={`text-right py-1.5 pr-3 ${
-                      (s.hype_risk ?? 0) > 0.7 ? "text-orange-400 font-semibold" : "text-slate-300"
-                    }`}>{s.hype_risk?.toFixed(2) ?? "-"}</td>
-                    <td className="text-right py-1.5 font-mono">{s.abnormal_attention?.toFixed(2) ?? "-"}</td>
+                {research.social.map((row) => (
+                  <tr key={row.week_ending}>
+                    <td style={{ fontFamily: "monospace", fontSize: "10px" }}>{row.week_ending?.slice(0, 10)}</td>
+                    <td>{row.mention_count ?? "-"}</td>
+                    <td className={sentimentColor(row.sentiment_polarity != null ? (row.sentiment_polarity > 0 ? "positive" : row.sentiment_polarity < 0 ? "negative" : "neutral") : null)}>
+                      {row.sentiment_polarity?.toFixed(3) ?? "-"}
+                    </td>
+                    <td className={tone(row.mention_momentum)}>{row.mention_momentum?.toFixed(2) ?? "-"}</td>
+                    <td className={row.hype_risk != null && row.hype_risk > 0.7 ? "text-red" : "text-muted"}>
+                      {row.hype_risk?.toFixed(2) ?? "-"}
+                    </td>
+                    <td>{row.abnormal_attention?.toFixed(2) ?? "-"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -390,20 +395,20 @@ export default async function StockPage({ params }: { params: { ticker: string }
       )}
 
       {research.news.length > 0 && (
-        <div className="rounded-lg border border-slate-700 bg-slate-800 p-4">
-          <h2 className="text-lg font-semibold text-white mb-4">Recent News</h2>
-          <div className="space-y-3">
-            {research.news.map((n, i) => (
-              <div key={i} className="border-t border-slate-700 pt-3 first:border-0 first:pt-0">
-                <div className="flex items-start gap-2">
-                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${sentimentColor(n.sentiment_label)}`}>
-                    {n.sentiment_label}
+        <div className="box" style={{ marginTop: "12px" }}>
+          <div className="box-head">Recent News</div>
+          <div className="box-body">
+            {research.news.map((news, index) => (
+              <div key={index} style={{ borderTop: index === 0 ? "none" : "1px solid #c0c0c0", paddingTop: index === 0 ? 0 : "8px", marginTop: index === 0 ? 0 : "8px" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                  <span className={`badge ${news.sentiment_label === "positive" ? "badge-success" : news.sentiment_label === "negative" ? "badge-danger" : "badge-info"}`}>
+                    {news.sentiment_label}
                   </span>
-                  <span className="text-sm text-slate-200 leading-snug">{n.headline}</span>
+                  <span>{news.headline}</span>
                 </div>
-                <div className="text-xs text-slate-500 mt-1">
-                  {n.source} · {n.published_at?.slice(0, 10)}
-                  {n.sentiment_score != null && ` · score: ${n.sentiment_score.toFixed(2)}`}
+                <div style={{ fontSize: "10px", color: "#666", marginTop: "4px" }}>
+                  {news.source} · {news.published_at?.slice(0, 10)}
+                  {news.sentiment_score != null && ` · score: ${news.sentiment_score.toFixed(2)}`}
                 </div>
               </div>
             ))}
@@ -412,4 +417,55 @@ export default async function StockPage({ params }: { params: { ticker: string }
       )}
     </div>
   );
+}
+
+function MetricCard({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+}) {
+  return (
+    <div className="box" style={{ marginBottom: 0 }}>
+      <div className="box-head">{label}</div>
+      <div className="box-body">
+        <div style={{ fontSize: "20px", fontWeight: "bold" }} className={color}>
+          {value}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricGrid({
+  items,
+}: {
+  items: Array<{ label: string; value: string; pct?: boolean; tone?: string }>;
+}) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "8px" }}>
+      {items.map((item) => (
+        <div key={item.label} style={{ background: "#f8f8f8", border: "1px solid #c0c0c0", padding: "8px" }}>
+          <div style={{ fontSize: "10px", color: "#666", marginBottom: "4px" }}>{item.label}</div>
+          <div style={{ fontFamily: "monospace", fontSize: "11px", fontWeight: "bold" }} className={item.tone}>
+            {item.value}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function tone(value: number | null | undefined): string {
+  if (value == null) return "text-muted";
+  return value >= 0 ? "text-green" : "text-red";
+}
+
+function confidenceBadge(confidence: string | null): string {
+  if (confidence === "high") return "badge-success";
+  if (confidence === "medium") return "badge-warning";
+  return "badge-info";
 }

@@ -1,8 +1,8 @@
-import json
 import hashlib
+import logging
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from app.database import Base, get_engine
 import app.models  # noqa: F401 - register SQLAlchemy models before metadata creation
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -29,6 +29,7 @@ from app.logging_config import configure_logging
 from app.websocket import websocket_endpoint
 
 limiter = Limiter(key_func=get_remote_address)
+logger = logging.getLogger(__name__)
 
 # Configure structured logging on startup
 configure_logging(log_level="INFO", json=True)
@@ -149,7 +150,8 @@ def _get_redis():
             import redis as redis_lib
             _redis_client = redis_lib.from_url(settings.redis_url, decode_responses=True)
             _redis_client.ping()
-        except Exception:
+        except Exception as exc:
+            logger.warning("Redis client unavailable; cache disabled: %s", exc)
             _redis_client = None
     return _redis_client
 
@@ -217,21 +219,27 @@ async def redis_cache_middleware(request: Request, call_next):
     try:
         cached = r.get(cache_key)
         if cached:
-            return JSONResponse(content=json.loads(cached))
-    except Exception:
-        pass
+            return Response(content=cached, media_type="application/json")
+    except Exception as exc:
+        logger.warning("Redis cache read failed for %s: %s", request.url.path, exc)
 
     response = await call_next(request)
 
     if response.status_code == 200:
+        headers = {
+            key: value
+            for key, value in response.headers.items()
+            if key.lower() not in {"content-length", "content-type"}
+        }
         try:
             body = b""
             async for chunk in response.body_iterator:
                 body += chunk
             r.setex(cache_key, 300, body.decode())
-            return JSONResponse(content=json.loads(body))
-        except Exception:
-            pass
+            return Response(content=body, status_code=response.status_code, media_type=response.media_type, headers=headers)
+        except Exception as exc:
+            logger.warning("Redis cache write failed for %s: %s", request.url.path, exc)
+            return Response(content=body, status_code=response.status_code, media_type=response.media_type, headers=headers)
 
     return response
 

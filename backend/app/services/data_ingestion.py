@@ -60,6 +60,7 @@ class DataIngestionService:
             set_={"weight": stmt.excluded.weight},
         )
         self.session.execute(stmt)
+        self.session.commit()
         return len(rows)
 
     def import_universe_snapshots_csv(self, path: str, index_name: str = "SP500") -> int:

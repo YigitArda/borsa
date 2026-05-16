@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, DateTime, Integer, Float, Text, JSON, func, ForeignKey
+from sqlalchemy import Boolean, String, DateTime, Integer, Float, Text, JSON, func, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -58,10 +58,10 @@ class ModelPromotion(Base):
     probabilistic_sr: Mapped[float | None] = mapped_column(Float)
     permutation_pvalue: Mapped[float | None] = mapped_column(Float)
     spy_sharpe: Mapped[float | None] = mapped_column(Float)
-    outperforms_spy: Mapped[bool | None] = mapped_column(String(5))
+    outperforms_spy: Mapped[bool | None] = mapped_column(Boolean)
     avg_win_rate: Mapped[float | None] = mapped_column(Float)
     total_trades: Mapped[int | None] = mapped_column(Integer)
     min_drawdown: Mapped[float | None] = mapped_column(Float)
     avg_profit_factor: Mapped[float | None] = mapped_column(Float)
-    concentration_ok: Mapped[bool | None] = mapped_column(String(5))
+    concentration_ok: Mapped[bool | None] = mapped_column(Boolean)
     details: Mapped[dict | None] = mapped_column(JSON)
