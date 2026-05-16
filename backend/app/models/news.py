@@ -48,4 +48,5 @@ class SocialSentiment(Base):
     hype_risk: Mapped[float | None] = mapped_column(Float)
     abnormal_attention: Mapped[float | None] = mapped_column(Float)
     source: Mapped[str] = mapped_column(String(50), default="yfinance_proxy")
+    source_used: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

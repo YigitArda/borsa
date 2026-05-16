@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.services.data_source_health import record_source_health
 from app.models.news import SocialSentiment
 from app.models.stock import Stock
 
@@ -85,15 +86,20 @@ class RedditSentimentService:
         if stock is None:
             return 0
 
-        posts = list(self._fetch_pushshift(ticker, start, end))
-        if not posts:
-            # Pushshift unavailable — use PRAW for recent data only
-            recent_cutoff = date.today() - timedelta(weeks=2)
-            if end >= recent_cutoff:
-                posts = list(self._fetch_praw(ticker))
+        posts, source_used = self._fetch_best_posts(ticker, start, end)
 
         if not posts:
             logger.debug("Reddit: no posts for %s %s–%s", ticker, start, end)
+            record_source_health(
+                self.session,
+                source_name="reddit",
+                source_used=source_used,
+                status="failure",
+                target_ticker=ticker,
+                week_ending=end,
+                message="no reddit posts found",
+                details={"start": str(start), "end": str(end)},
+            )
             return 0
 
         vader = self._get_vader()
@@ -117,7 +123,18 @@ class RedditSentimentService:
         if not week_data:
             return 0
 
-        return self._upsert_weeks(stock.id, week_data)
+        written = self._upsert_weeks(stock.id, week_data, source_used=source_used or SOURCE)
+        record_source_health(
+            self.session,
+            source_name="reddit",
+            source_used=source_used or SOURCE,
+            status="success",
+            target_ticker=ticker,
+            week_ending=end,
+            message=f"wrote {written} weekly rows",
+            details={"start": str(start), "end": str(end)},
+        )
+        return written
 
     def backfill(
         self,
@@ -183,6 +200,66 @@ class RedditSentimentService:
     # Pushshift
     # ------------------------------------------------------------------
 
+    def _fetch_best_posts(
+        self,
+        ticker: str,
+        start: date,
+        end: date,
+    ) -> tuple[list[dict], str | None]:
+        """Try Pushshift, then PRAW month/year fallbacks."""
+        posts = list(self._fetch_pushshift(ticker, start, end))
+        if posts:
+            record_source_health(
+                self.session,
+                source_name="reddit_pushshift",
+                source_used="pushshift",
+                status="success",
+                target_ticker=ticker,
+                week_ending=end,
+                message=f"fetched {len(posts)} posts",
+                details={"endpoint": "pushshift"},
+            )
+            return posts, "pushshift"
+
+        record_source_health(
+            self.session,
+            source_name="reddit_pushshift",
+            source_used=None,
+            status="failure",
+            target_ticker=ticker,
+            week_ending=end,
+            message="pushshift unavailable or empty",
+            details={"start": str(start), "end": str(end)},
+        )
+
+        for time_filter in ("month", "year"):
+            posts = list(self._fetch_praw(ticker, time_filter=time_filter))
+            if posts:
+                source_used = f"praw_{time_filter}"
+                record_source_health(
+                    self.session,
+                    source_name="reddit_praw",
+                    source_used=source_used,
+                    status="success",
+                    target_ticker=ticker,
+                    week_ending=end,
+                    message=f"fetched {len(posts)} posts",
+                    details={"time_filter": time_filter},
+                )
+                return posts, source_used
+
+        record_source_health(
+            self.session,
+            source_name="reddit_praw",
+            source_used=None,
+            status="failure",
+            target_ticker=ticker,
+            week_ending=end,
+            message="praw month/year fallback exhausted",
+            details={"start": str(start), "end": str(end)},
+        )
+        return [], None
+
     def _fetch_pushshift(
         self,
         ticker: str,
@@ -235,8 +312,8 @@ class RedditSentimentService:
     # PRAW (recent data fallback)
     # ------------------------------------------------------------------
 
-    def _fetch_praw(self, ticker: str, limit: int = 500) -> Iterator[dict]:
-        """Fetch recent posts via PRAW. Only last ~days of activity."""
+    def _fetch_praw(self, ticker: str, limit: int = 500, time_filter: str = "month") -> Iterator[dict]:
+        """Fetch recent posts via PRAW. Falls back from month to year if needed."""
         praw = self._get_praw()
         if praw is None:
             return
@@ -247,7 +324,7 @@ class RedditSentimentService:
                 for post in sub.search(
                     f'"{ticker}"',
                     sort="new",
-                    time_filter="month",
+                    time_filter=time_filter,
                     limit=limit // len(SUBREDDITS),
                 ):
                     yield {
@@ -264,7 +341,7 @@ class RedditSentimentService:
     # Upsert
     # ------------------------------------------------------------------
 
-    def _upsert_weeks(self, stock_id: int, week_data: dict[date, list[float]]) -> int:
+    def _upsert_weeks(self, stock_id: int, week_data: dict[date, list[float]], source_used: str) -> int:
         """Aggregate weekly stats and upsert into social_sentiment."""
         sorted_weeks = sorted(week_data.keys())
         mention_counts = [len(week_data[w]) for w in sorted_weeks]
@@ -292,6 +369,7 @@ class RedditSentimentService:
                 "hype_risk": hype_risk,
                 "abnormal_attention": round(abnormal, 4),
                 "source": SOURCE,
+                "source_used": source_used,
             })
 
         if not rows:
@@ -306,6 +384,7 @@ class RedditSentimentService:
                 "sentiment_polarity": stmt.excluded.sentiment_polarity,
                 "hype_risk": stmt.excluded.hype_risk,
                 "abnormal_attention": stmt.excluded.abnormal_attention,
+                "source_used": stmt.excluded.source_used,
             },
         )
         self.session.execute(stmt)

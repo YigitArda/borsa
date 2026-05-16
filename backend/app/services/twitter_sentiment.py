@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.services.data_source_health import record_source_health
 from app.models.news import SocialSentiment
 from app.models.stock import Stock
 
@@ -76,6 +77,16 @@ class TwitterSentimentService:
         token = self._get_token()
         if not token:
             logger.debug("Twitter: no bearer token configured; skipping %s", ticker)
+            record_source_health(
+                self.session,
+                source_name="twitter",
+                source_used=None,
+                status="skipped",
+                target_ticker=ticker,
+                week_ending=end,
+                message="bearer token missing",
+                details={"start": str(start), "end": str(end)},
+            )
             return 0
 
         stock = self.session.execute(
@@ -86,14 +97,27 @@ class TwitterSentimentService:
 
         # Try full-archive first; fall back to recent if 403 (tier restriction)
         posts = list(self._fetch_archive(ticker, start, end, token))
+        source_used = "full_archive" if posts else None
         if not posts:
             # Only useful if date range overlaps last 7 days
             recent_cutoff = date.today() - timedelta(days=7)
             if end >= recent_cutoff:
                 posts = list(self._fetch_recent(ticker, max(start, recent_cutoff), end, token))
+                if posts:
+                    source_used = "recent"
 
         if not posts:
             logger.debug("Twitter: no tweets for %s %s–%s", ticker, start, end)
+            record_source_health(
+                self.session,
+                source_name="twitter",
+                source_used=None,
+                status="failure",
+                target_ticker=ticker,
+                week_ending=end,
+                message="no tweets found",
+                details={"start": str(start), "end": str(end)},
+            )
             return 0
 
         vader = self._get_vader()
@@ -116,7 +140,18 @@ class TwitterSentimentService:
         if not week_data:
             return 0
 
-        return self._upsert_weeks(stock.id, week_data)
+        written = self._upsert_weeks(stock.id, week_data, source_used=source_used or "twitter")
+        record_source_health(
+            self.session,
+            source_name="twitter",
+            source_used=source_used or "twitter",
+            status="success",
+            target_ticker=ticker,
+            week_ending=end,
+            message=f"wrote {written} weekly rows",
+            details={"start": str(start), "end": str(end)},
+        )
+        return written
 
     def backfill(
         self,
@@ -300,7 +335,7 @@ class TwitterSentimentService:
     # Upsert
     # ------------------------------------------------------------------
 
-    def _upsert_weeks(self, stock_id: int, week_data: dict[date, list[float]]) -> int:
+    def _upsert_weeks(self, stock_id: int, week_data: dict[date, list[float]], source_used: str) -> int:
         """Aggregate weekly stats and upsert into social_sentiment."""
         sorted_weeks = sorted(week_data.keys())
         mention_counts = [len(week_data[w]) for w in sorted_weeks]
@@ -328,6 +363,7 @@ class TwitterSentimentService:
                 "hype_risk": hype_risk,
                 "abnormal_attention": round(abnormal, 4),
                 "source": SOURCE,
+                "source_used": source_used,
             })
 
         if not rows:
@@ -342,6 +378,7 @@ class TwitterSentimentService:
                 "sentiment_polarity": stmt.excluded.sentiment_polarity,
                 "hype_risk": stmt.excluded.hype_risk,
                 "abnormal_attention": stmt.excluded.abnormal_attention,
+                "source_used": stmt.excluded.source_used,
             },
         )
         self.session.execute(stmt)

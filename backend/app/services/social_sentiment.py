@@ -2,14 +2,15 @@
 Social sentiment orchestrator.
 
 Sources (in priority order):
-  1. Reddit  — real data via Pushshift (historical) + PRAW (recent)
-  2. Twitter — real data via X API v2 (Pro = full archive; Free = last 7 days)
-  3. yfinance_proxy — fallback if neither Reddit nor Twitter has data
+  1. Reddit        - Pushshift historical + PRAW recent fallback
+  2. StockTwits    - free symbol-stream fallback
+  3. Twitter       - X API v2 full archive / recent search
+  4. yfinance_proxy - fallback if none of the above has data
 
 Point-in-time guarantee:
-  Tüm kaynaklar, tweet/post yayın tarihini o haftanın Friday'ine (week_ending)
-  atayarak saklar. `get_weekly_social_features` sadece istenen week_ending'i
-  döndürür — backtest sırasında gelecek bilgi sızıntısı olmaz.
+  Every message is assigned to the Friday of its own week (week_ending).
+  `get_weekly_social_features` only reads the exact requested week_ending,
+  so backtests do not see future social data.
 """
 from __future__ import annotations
 
@@ -22,8 +23,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.models.stock import Stock
 from app.models.news import SocialSentiment
+from app.models.stock import Stock
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class _FallbackSentimentIntensityAnalyzer:
 
 
 class SocialSentimentService:
-    """Orchestrates Reddit, Twitter, and yfinance-proxy ingestion."""
+    """Orchestrates Reddit, StockTwits, Twitter, and yfinance-proxy ingestion."""
 
     def __init__(self, session: Session):
         self.session = session
@@ -64,7 +65,7 @@ class SocialSentimentService:
         """Ingest recent social data from all configured sources."""
         results: dict[str, int] = {}
 
-        # Reddit — last 4 weeks via PRAW / Pushshift
+        # Reddit - last 4 weeks via PRAW / Pushshift
         try:
             from app.services.reddit_sentiment import RedditSentimentService
             reddit = RedditSentimentService(self.session)
@@ -75,7 +76,18 @@ class SocialSentimentService:
         except Exception as exc:
             logger.warning("Reddit ingest skipped: %s", exc)
 
-        # Twitter — last 7 days (free tier)
+        # StockTwits - free symbol stream fallback
+        try:
+            from app.services.stocktwits_sentiment import StocktwitsSentimentService
+            stocktwits = StocktwitsSentimentService(self.session)
+            stocktwits_results = stocktwits.ingest_recent(tickers)
+            for t, n in stocktwits_results.items():
+                results[t] = results.get(t, 0) + n
+            logger.info("StockTwits ingest done: %d tickers", len(stocktwits_results))
+        except Exception as exc:
+            logger.warning("StockTwits ingest skipped: %s", exc)
+
+        # Twitter - last 7 days (free tier) or archive if bearer token exists
         try:
             from app.services.twitter_sentiment import TwitterSentimentService
             twitter = TwitterSentimentService(self.session)
@@ -86,12 +98,12 @@ class SocialSentimentService:
         except Exception as exc:
             logger.warning("Twitter ingest skipped: %s", exc)
 
-        # yfinance proxy — only for tickers with no real data this week
-        _friday = self._this_friday()
+        # yfinance proxy - only for tickers with no real data this week
+        this_friday = self._this_friday()
         for ticker in tickers:
             if results.get(ticker, 0) == 0:
                 try:
-                    n = self._ingest_yfinance_proxy(ticker, _friday)
+                    n = self._ingest_yfinance_proxy(ticker, this_friday)
                     results[ticker] = n
                 except Exception as exc:
                     logger.debug("yfinance proxy failed %s: %s", ticker, exc)
@@ -110,38 +122,35 @@ class SocialSentimentService:
         end: date,
         delay_sec: float = 1.0,
     ) -> dict[str, dict[str, int]]:
-        """Backfill Reddit + Twitter for a historical date range.
-
-        Twitter backfill only works with a Pro/Academic bearer token.
-        """
+        """Backfill Reddit + StockTwits + Twitter for a historical date range."""
         from app.services.reddit_sentiment import RedditSentimentService
+        from app.services.stocktwits_sentiment import StocktwitsSentimentService
         from app.services.twitter_sentiment import TwitterSentimentService
 
         reddit = RedditSentimentService(self.session)
+        stocktwits = StocktwitsSentimentService(self.session)
         twitter = TwitterSentimentService(self.session)
 
         reddit_results = reddit.backfill(tickers, start, end, delay_sec=delay_sec)
+        stocktwits_results = stocktwits.backfill(tickers, start, end, delay_sec=delay_sec)
         twitter_results = twitter.backfill(tickers, start, end, delay_sec=delay_sec)
 
         combined: dict[str, dict[str, int]] = {}
         for t in tickers:
             combined[t] = {
                 "reddit": reddit_results.get(t, 0),
+                "stocktwits": stocktwits_results.get(t, 0),
                 "twitter": twitter_results.get(t, 0),
             }
 
         return combined
 
     # ------------------------------------------------------------------
-    # Feature retrieval (PIT safe — called from feature engineering)
+    # Feature retrieval (PIT safe - called from feature engineering)
     # ------------------------------------------------------------------
 
     def get_weekly_social_features(self, stock_id: int, week_ending: date) -> dict[str, float]:
-        """Aggregate social features across all sources for a given week.
-
-        PIT safe: reads only rows with the exact week_ending, which were
-        written from data that existed at or before that date.
-        """
+        """Aggregate social features across all sources for a given week."""
         rows = self.session.execute(
             select(SocialSentiment).where(
                 SocialSentiment.stock_id == stock_id,
@@ -152,7 +161,6 @@ class SocialSentimentService:
         if not rows:
             return self._zero_features()
 
-        # Average across sources, weighted by mention count
         total_mentions = sum(r.mention_count or 0 for r in rows)
         if total_mentions == 0:
             return self._zero_features()
@@ -204,6 +212,7 @@ class SocialSentimentService:
         sorted_weeks = sorted(week_data.keys())
         mention_counts = [len(week_data[w]) for w in sorted_weeks]
         avg_mentions = sum(mention_counts) / max(len(mention_counts), 1)
+
         import numpy as np
         std_mentions = float(np.std(mention_counts)) or 1.0
 
@@ -225,6 +234,7 @@ class SocialSentimentService:
                 "hype_risk": hype_risk,
                 "abnormal_attention": round(abnormal, 4),
                 "source": "yfinance_proxy",
+                "source_used": "yfinance_proxy",
             })
 
         if not rows:
@@ -239,6 +249,7 @@ class SocialSentimentService:
                 "sentiment_polarity": stmt.excluded.sentiment_polarity,
                 "hype_risk": stmt.excluded.hype_risk,
                 "abnormal_attention": stmt.excluded.abnormal_attention,
+                "source_used": stmt.excluded.source_used,
             },
         )
         self.session.execute(stmt)
@@ -271,6 +282,5 @@ class SocialSentimentService:
                 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
                 self._vader = SentimentIntensityAnalyzer()
             except ImportError:
-                logger.warning("vaderSentiment not installed; using fallback lexicon scorer")
                 self._vader = _FallbackSentimentIntensityAnalyzer()
         return self._vader

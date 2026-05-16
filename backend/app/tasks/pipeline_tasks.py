@@ -251,12 +251,14 @@ def backfill_social(
         svc = SocialSentimentService(session)
         results = svc.backfill(tickers, start_date, end_date, delay_sec=delay_sec)
         total_reddit = sum(v["reddit"] for v in results.values())
+        total_stocktwits = sum(v["stocktwits"] for v in results.values())
         total_twitter = sum(v["twitter"] for v in results.values())
         return {
             "status": "ok",
             "tickers": len(tickers),
             "date_range": f"{start} → {end_date}",
             "total_reddit_weeks": total_reddit,
+            "total_stocktwits_weeks": total_stocktwits,
             "total_twitter_weeks": total_twitter,
             "results": results,
         }
