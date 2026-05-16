@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User, ApiKey
+from app.time_utils import utcnow
 
 
 class AuthService:
@@ -49,7 +50,7 @@ class AuthService:
     def create_access_token(cls, data: dict, secret: str, expires_delta: timedelta | None = None) -> str:
         jwt = cls._get_jwt()
         to_encode = data.copy()
-        expire = datetime.utcnow() + (expires_delta or timedelta(minutes=30))
+        expire = utcnow() + (expires_delta or timedelta(minutes=30))
         to_encode.update({"exp": expire})
         return jwt.encode(to_encode, secret, algorithm="HS256")
 
@@ -104,7 +105,7 @@ class AuthService:
             key_hash=key_hash,
             user_id=user_id,
             scope=scope or "read",
-            expires_at=(datetime.utcnow() + timedelta(days=expires_days)) if expires_days else None,
+            expires_at=(utcnow() + timedelta(days=expires_days)) if expires_days else None,
         )
         self.db.add(api_key)
         await self.db.commit()
@@ -119,6 +120,6 @@ class AuthService:
         api_key = result.scalar_one_or_none()
         if api_key is None:
             return None
-        if api_key.expires_at and datetime.utcnow() > api_key.expires_at:
+        if api_key.expires_at and utcnow() > api_key.expires_at:
             return None
         return api_key

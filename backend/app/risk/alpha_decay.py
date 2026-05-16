@@ -9,6 +9,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+from app.time_utils import utcnow
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,7 +69,7 @@ class AlphaDecayMonitor:
             "baseline_vol": float(returns.std()) if len(returns) else 0.0,
             "baseline_mean": float(returns.mean()) if len(returns) else 0.0,
             "baseline_win_rate": float((returns > 0).mean()) if len(returns) else 0.0,
-            "live_since": datetime.utcnow(),
+            "live_since": utcnow(),
         }
         self.history[strategy_id] = pd.DataFrame(
             columns=["return", "prediction", "actual", "timestamp"]
@@ -91,7 +93,7 @@ class AlphaDecayMonitor:
                     "return": float(daily_return),
                     "prediction": prediction,
                     "actual": actual,
-                    "timestamp": datetime.utcnow(),
+                    "timestamp": utcnow(),
                 }
             ]
         )
@@ -164,7 +166,7 @@ class AlphaDecayMonitor:
             rolling_volatility=current_vol,
             max_drawdown_current=max_dd,
             recommendation=recommendation,
-            timestamp=datetime.utcnow(),
+            timestamp=utcnow(),
         )
 
     def _sharpe(self, returns: pd.Series, risk_free: float = 0.0) -> float:

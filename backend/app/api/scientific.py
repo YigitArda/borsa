@@ -15,6 +15,7 @@ from app.services.core_satellite import CoreSatelliteAllocator
 from app.services.trinity_screener import TrinityScreener
 from app.strategies.meta_selector import MetaStrategySelector
 from app.strategies.pead_nlp import EarningsEvent, PEADNLPStrategy
+from app.time_utils import utcnow
 
 router = APIRouter(tags=["scientific"])
 
@@ -227,7 +228,7 @@ async def weekly_pipeline(payload: WeeklyPipelinePayload):
     )
 
     return {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": utcnow().isoformat(),
         "regime": regime,
         "trinity_top": [score.to_dict() for score in trinity_scores[:20]],
         "pre_explosion": [score.to_dict() for score in pre_explosion[:15]],

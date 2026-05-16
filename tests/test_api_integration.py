@@ -218,7 +218,7 @@ class TestErrorHandling:
     def test_invalid_json(self, client: TestClient) -> None:
         response = client.post(
             "/auth/login",
-            data="not json",
+            content="not json",
             headers={"Content-Type": "application/json"},
         )
         assert response.status_code == 422

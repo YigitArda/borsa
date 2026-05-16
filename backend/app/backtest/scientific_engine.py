@@ -17,6 +17,8 @@ import pandas as pd
 from sklearn.base import BaseEstimator, clone
 from sklearn.model_selection import BaseCrossValidator
 
+from app.time_utils import utcnow
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,7 +52,7 @@ class Hypothesis:
     timeframe: str
     max_drawdown_tolerance: float = 0.20
     min_sharpe: float = 1.0
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=utcnow)
     status: str = "UNTESTED"
     results: list[BacktestResult] = field(default_factory=list)
 

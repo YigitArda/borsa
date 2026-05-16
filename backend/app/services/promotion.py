@@ -13,6 +13,7 @@ from app.models.regime import MarketRegime
 from app.services.meta_learner import MetaPromotionModel
 from app.services.paper_trading import PaperTradingService
 from app.services.regime_detection import RegimeDetector
+from app.time_utils import utcnow
 
 
 class ResearchMetricGate:
@@ -237,7 +238,7 @@ class PromotionGate:
 
         strategy = self.session.get(Strategy, strategy_id)
         strategy.status = "promoted"
-        strategy.promoted_at = datetime.utcnow()
+        strategy.promoted_at = utcnow()
         promotion = ModelPromotion(
             strategy_id=strategy_id,
             avg_sharpe=summary.get("avg_sharpe"),

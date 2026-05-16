@@ -17,6 +17,7 @@ from app.services.core_satellite import CoreSatelliteAllocator
 from app.services.trinity_screener import TrinityScreener
 from app.strategies.meta_selector import MetaStrategySelector
 from app.strategies.pead_nlp import EarningsEvent, PEADNLPStrategy
+from app.time_utils import utcnow
 
 
 def _price_frame(n: int = 280, drift: float = 0.001) -> pd.DataFrame:
@@ -122,7 +123,7 @@ def test_meta_selector_and_decay_monitor() -> None:
 
 
 def test_pead_strategy_generates_meta_labeled_signal() -> None:
-    now = datetime.utcnow()
+    now = utcnow()
     events = {
         "AAA": [
             EarningsEvent("AAA", now - timedelta(days=90), 1.0, actual_eps=1.1),

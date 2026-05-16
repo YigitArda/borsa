@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_sessionmaker
 from app.models.notification import NotificationLog, NotificationPreference
+from app.time_utils import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +168,7 @@ class NotificationService:
                 subject=title,
                 body=message,
                 status="sent",
-                sent_at=datetime.utcnow(),
+                sent_at=utcnow(),
             )
             db.add(log)
             await db.commit()
@@ -251,7 +252,7 @@ class NotificationService:
                 subject=subject,
                 body=body,
                 status=result.get("status", "failed"),
-                sent_at=datetime.utcnow() if result.get("status") == "sent" else None,
+                sent_at=utcnow() if result.get("status") == "sent" else None,
                 error=result.get("error"),
             )
             db.add(log)
