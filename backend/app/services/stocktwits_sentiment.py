@@ -16,12 +16,12 @@ from typing import Iterator
 
 import requests
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.models.news import SocialSentiment
 from app.models.stock import Stock
 from app.services.data_source_health import record_source_health
+from app.services.social_sentiment_common import get_vader_analyzer, upsert_social_weekly_rows
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,6 @@ class StocktwitsSentimentService:
 
     def __init__(self, session: Session):
         self.session = session
-        self._vader = None
 
     def ingest_ticker(self, ticker: str, start: date, end: date, max_pages: int = 5) -> int:
         stock = self.session.execute(
@@ -69,7 +68,7 @@ class StocktwitsSentimentService:
             )
             return 0
 
-        vader = self._get_vader()
+        vader = get_vader_analyzer()
         week_data: dict[date, list[float]] = {}
         for post in posts:
             created_at = post.get("created_at") or post.get("created")
@@ -99,7 +98,13 @@ class StocktwitsSentimentService:
             )
             return 0
 
-        written = self._upsert_weeks(stock.id, week_data, source_used="stocktwits_api")
+        written = upsert_social_weekly_rows(
+            self.session,
+            stock_id=stock.id,
+            week_data=week_data,
+            source=SOURCE,
+            source_used="stocktwits_api",
+        )
         record_source_health(
             self.session,
             source_name="stocktwits",
@@ -191,61 +196,3 @@ class StocktwitsSentimentService:
 
         if seen:
             logger.debug("Stocktwits: %s → %d messages", ticker, seen)
-
-    def _upsert_weeks(self, stock_id: int, week_data: dict[date, list[float]], source_used: str) -> int:
-        sorted_weeks = sorted(week_data.keys())
-        mention_counts = [len(week_data[w]) for w in sorted_weeks]
-        avg_mentions = sum(mention_counts) / max(len(mention_counts), 1)
-
-        import numpy as np
-        std_mentions = float(np.std(mention_counts)) or 1.0
-
-        rows = []
-        for i, week in enumerate(sorted_weeks):
-            scores = week_data[week]
-            n = len(scores)
-            avg_sentiment = sum(scores) / max(n, 1)
-            prev_n = mention_counts[i - 1] if i > 0 else n
-            momentum = (n - prev_n) / max(prev_n, 1)
-            abnormal = (n - avg_mentions) / std_mentions
-            hype_risk = 1.0 if (n > avg_mentions + 2 * std_mentions and avg_sentiment > 0.3) else 0.0
-            rows.append({
-                "stock_id": stock_id,
-                "week_ending": str(week),
-                "mention_count": n,
-                "mention_momentum": round(momentum, 4),
-                "sentiment_polarity": round(avg_sentiment, 4),
-                "hype_risk": hype_risk,
-                "abnormal_attention": round(abnormal, 4),
-                "source": SOURCE,
-                "source_used": source_used,
-            })
-
-        if not rows:
-            return 0
-
-        stmt = pg_insert(SocialSentiment).values(rows)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["stock_id", "week_ending", "source"],
-            set_={
-                "mention_count": stmt.excluded.mention_count,
-                "mention_momentum": stmt.excluded.mention_momentum,
-                "sentiment_polarity": stmt.excluded.sentiment_polarity,
-                "hype_risk": stmt.excluded.hype_risk,
-                "abnormal_attention": stmt.excluded.abnormal_attention,
-                "source_used": stmt.excluded.source_used,
-            },
-        )
-        self.session.execute(stmt)
-        self.session.commit()
-        return len(rows)
-
-    def _get_vader(self):
-        if self._vader is None:
-            try:
-                from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-                self._vader = SentimentIntensityAnalyzer()
-            except ImportError:
-                from app.services.social_sentiment import _FallbackSentimentIntensityAnalyzer
-                self._vader = _FallbackSentimentIntensityAnalyzer()
-        return self._vader

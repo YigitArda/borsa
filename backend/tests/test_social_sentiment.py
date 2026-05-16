@@ -86,19 +86,19 @@ def test_reddit_falls_back_month_then_year(monkeypatch):
             )
         return iter(())
 
-    def fake_get_vader(self):
+    def fake_get_vader():
         return SimpleNamespace(polarity_scores=lambda text: {"compound": 0.75})
 
-    def fake_upsert_weeks(self, stock_id, week_data, source_used):
+    def fake_upsert_weeks(session, *, stock_id, week_data, source, source_used):
         captured["source_used"] = source_used
         captured["week_count"] = str(len(week_data))
         return len(week_data)
 
     monkeypatch.setattr("app.services.reddit_sentiment.record_source_health", fake_record_source_health)
+    monkeypatch.setattr("app.services.reddit_sentiment.get_vader_analyzer", fake_get_vader)
+    monkeypatch.setattr("app.services.reddit_sentiment.upsert_social_weekly_rows", fake_upsert_weeks)
     monkeypatch.setattr(RedditSentimentService, "_fetch_pushshift", fake_fetch_pushshift)
     monkeypatch.setattr(RedditSentimentService, "_fetch_praw", fake_fetch_praw)
-    monkeypatch.setattr(RedditSentimentService, "_get_vader", fake_get_vader)
-    monkeypatch.setattr(RedditSentimentService, "_upsert_weeks", fake_upsert_weeks)
 
     service = RedditSentimentService(FakeSession())
     written = service.ingest_ticker("AAPL", date(2025, 1, 1), date(2025, 1, 10))

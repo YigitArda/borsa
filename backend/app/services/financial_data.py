@@ -175,6 +175,7 @@ class FinancialDataService:
                     FinancialMetric.stock_id == stock_id,
                     FinancialMetric.metric_name == "forward_pe",
                     FinancialMetric.as_of_date > three_months_ago,
+                    FinancialMetric.as_of_date <= today,
                 )
                 .order_by(FinancialMetric.as_of_date.desc())
                 .limit(1)

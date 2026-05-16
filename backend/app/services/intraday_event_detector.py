@@ -94,23 +94,32 @@ class IntradayEventDetector:
         self.session.flush()
         return event
 
-    def run_for_tickers(self, tickers: list[str], weeks_back: int = 52) -> int:
-        """Batch scan recent history for all tickers. Returns events recorded."""
+    def run_for_tickers(self, tickers: list[str], weeks_back: int = 52, end_date: date | None = None) -> int:
+        """Batch scan recent history for all tickers. Returns events recorded.
+
+        Args:
+            tickers: list of ticker symbols
+            weeks_back: how many weeks to scan back from end_date
+            end_date: last Friday to scan (default date.today()).  Pass an
+                      explicit date when running inside a backtest so the
+                      detector never looks at weeks that have not occurred yet
+                      in the simulation.
+        """
         stocks = {
             s.ticker: s.id
             for s in self.session.execute(
                 select(Stock).where(Stock.ticker.in_(tickers))
             ).scalars().all()
         }
-        today = date.today()
-        start_week = today - timedelta(weeks=weeks_back)
+        _end = end_date or date.today()
+        start_week = _end - timedelta(weeks=weeks_back)
 
         # All Fridays in range
         friday = start_week
         while friday.weekday() != 4:
             friday += timedelta(days=1)
         fridays = []
-        while friday <= today:
+        while friday <= _end:
             fridays.append(friday)
             friday += timedelta(weeks=1)
 

@@ -249,11 +249,14 @@ class DataQualityScorer:
 
         as_of_ratio = with_as_of / total_metrics if total_metrics else 0.0
 
-        # Latest as_of_date
+        # Latest as_of_date visible at the scoring week (PIT)
         latest_as_of = (
             await self.db.execute(
                 select(func.max(FinancialMetric.as_of_date)).where(
-                    FinancialMetric.stock_id == stock_id
+                    and_(
+                        FinancialMetric.stock_id == stock_id,
+                        FinancialMetric.as_of_date <= week,
+                    )
                 )
             )
         ).scalar()

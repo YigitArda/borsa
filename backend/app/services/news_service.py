@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.stock import Stock
 from app.models.news import NewsArticle, NewsAnalysis
+from app.services.social_sentiment_common import get_vader_analyzer
 
 logger = logging.getLogger(__name__)
 
@@ -41,16 +42,6 @@ def _classify_headline(text: str) -> dict[str, bool]:
 class NewsService:
     def __init__(self, session: Session):
         self.session = session
-        self._vader = None
-
-    def _get_vader(self):
-        if self._vader is None:
-            try:
-                from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-                self._vader = SentimentIntensityAnalyzer()
-            except ImportError:
-                logger.warning("vaderSentiment not installed; sentiment will be None")
-        return self._vader
 
     def ingest_news_for_ticker(self, ticker: str) -> int:
         import yfinance as yf
@@ -65,7 +56,7 @@ class NewsService:
             logger.error(f"News fetch failed for {ticker}: {e}")
             return 0
 
-        vader = self._get_vader()
+        vader = get_vader_analyzer()
         inserted = 0
 
         for item in news_items:

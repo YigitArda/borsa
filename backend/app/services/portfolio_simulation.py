@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from app.config import settings
+from app.services.simulation_common import build_price_lookup, to_date
 
 logger = logging.getLogger(__name__)
 
@@ -148,13 +149,11 @@ class PortfolioSimulator:
             trades_by_date.setdefault(d, []).append(t)
 
         # Pre-index prices by (ticker, date)
-        price_lookup: dict[tuple[str, date], float] = {}
-        if price_df is not None and not price_df.empty:
-            for _, row in price_df.iterrows():
-                d = row["date"]
-                if isinstance(d, str):
-                    d = pd.to_datetime(d).date()
-                price_lookup[(row["ticker"], d)] = float(row.get("close", row.get("open", 0)))
+        raw_lookup = build_price_lookup(price_df) if price_df is not None else {}
+        price_lookup: dict[tuple[str, date], float] = {
+            key: float(row.get("close", row.get("open", 0))) if row else 0.0
+            for key, row in raw_lookup.items()
+        }
 
         prev_month: int | None = None
         month_start_value = self.config.initial_capital
@@ -391,9 +390,7 @@ class PortfolioSimulator:
                 d = t.get(key)
                 if d is None:
                     continue
-                if isinstance(d, str):
-                    d = pd.to_datetime(d).date()
-                dates.add(d)
+                dates.add(to_date(d))
         return dates
 
     def _process_exits(
@@ -405,8 +402,7 @@ class PortfolioSimulator:
     ) -> PortfolioState:
         for t in trades:
             exit_date = t["exit_date"]
-            if isinstance(exit_date, str):
-                exit_date = pd.to_datetime(exit_date).date()
+            exit_date = to_date(exit_date)
             if exit_date != current_date:
                 continue
 
@@ -448,8 +444,7 @@ class PortfolioSimulator:
             entry_price = t.get("entry_price", 0.0)
             if entry_price == 0.0:
                 d = t["entry_date"]
-                if isinstance(d, str):
-                    d = pd.to_datetime(d).date()
+                d = to_date(d)
                 entry_price = price_lookup.get((ticker, d), 0.0)
 
             if entry_price <= 0:

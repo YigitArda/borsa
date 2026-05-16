@@ -172,15 +172,10 @@ class FeatureEngineeringService:
         feature_rows = []
         label_rows = []
 
-        # Fit price NLP service once on the full weekly history for this stock
+        # PriceNLP: rolling fit to avoid future leakage.  Re-fit at each week
+        # using only data available up to that point, so the model never sees
+        # returns from weeks it will later predict.
         _price_nlp = PriceNLPService()
-        if len(weekly_df) >= 20:
-            wr = weekly_df["weekly_return"].dropna()
-            nwr = wr.shift(-1)  # next week returns for training only
-            try:
-                _price_nlp.fit(wr, nwr)
-            except Exception as e:
-                logger.warning("PriceNLP fit failed [%s]: %s", stock.ticker if 'stock' in dir() else "unknown", e)
 
         # SP500 weekly returns for beta computation (loaded once per stock)
         _sp500_weekly = MomentumLowVolBatchService(self.session).get_sp500_weekly_returns()
@@ -230,9 +225,12 @@ class FeatureEngineeringService:
             )
             features.update(beh_features)
 
-            # Price NLP features (SAX + N-gram + embedding)
+            # Price NLP features (SAX + N-gram + embedding) — rolling fit
             try:
                 avail_wr = weekly_df[weekly_df.index < week_end]["weekly_return"].dropna()
+                if len(avail_wr) >= 20:
+                    nxt = avail_wr.shift(-1)
+                    _price_nlp.fit(avail_wr, nxt)
                 nlp_features = _price_nlp.compute(avail_wr)
                 features.update(nlp_features)
             except Exception as e:

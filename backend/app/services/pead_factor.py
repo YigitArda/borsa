@@ -146,10 +146,20 @@ class PEADFactor:
         df = df.set_index("date").sort_index()
         return df
 
-    def update_price_confirmations(self, ticker: str, daily_df: pd.DataFrame | None = None) -> int:
+    def update_price_confirmations(
+        self,
+        ticker: str,
+        daily_df: pd.DataFrame | None = None,
+        max_date: date | None = None,
+    ) -> int:
         """
         Compute earnings_day_return, post_earnings_week1, earnings_volume_ratio
         from price data. If daily_df is not passed, loads from DB automatically.
+
+        Args:
+            max_date: when running inside a backtest, pass the simulation date
+                      so that post-earnings returns are never computed from
+                      prices that occur after the simulation horizon.
         """
         stock = self.session.execute(
             select(Stock).where(Stock.ticker == ticker)
@@ -161,6 +171,11 @@ class PEADFactor:
             daily_df = self._load_daily_df(stock.id)
         if daily_df.empty:
             return 0
+
+        if max_date is not None:
+            daily_df = daily_df[daily_df.index <= pd.Timestamp(max_date)]
+            if daily_df.empty:
+                return 0
 
         signals = self.session.execute(
             select(PEADSignal).where(
