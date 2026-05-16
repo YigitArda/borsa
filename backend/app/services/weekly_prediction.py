@@ -193,9 +193,18 @@ class WeeklyPredictionService:
         latest_week = df["week_ending"].max()
         latest_rows = df[df["week_ending"] == latest_week]
         train_df = df[df["week_ending"] < latest_week]
-        week_starting = requested_week_starting or (latest_week + pd.Timedelta(days=3)).date()
+
+        if requested_week_starting:
+            week_starting = requested_week_starting
+        else:
+            # Next Monday after latest_week, regardless of what day latest_week falls on
+            from datetime import timedelta as _td
+            latest_week_date = latest_week.date() if hasattr(latest_week, "date") else latest_week
+            days_to_next_monday = (7 - latest_week_date.weekday()) % 7 or 7
+            week_starting = latest_week_date + _td(days=days_to_next_monday)
 
         if len(train_df) < 100:
+            logger.info("Insufficient training data (%d rows); skipping predictions", len(train_df))
             return 0
 
         feature_cols = [c for c in strategy.config.get("features", []) if c in latest_rows.columns]
@@ -203,6 +212,10 @@ class WeeklyPredictionService:
             feature_cols = [c for c in latest_rows.columns if c not in [
                 "stock_id", "week_ending", "label", "ticker", "risk_target_1w", "next_week_return"
             ]]
+
+        if not feature_cols:
+            logger.warning("No usable feature columns found; skipping predictions for strategy %s", strategy.id)
+            return 0
 
         # Train main model
         main_model, main_scaler = trainer._train(train_df)

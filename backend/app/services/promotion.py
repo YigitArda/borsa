@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -14,6 +16,8 @@ from app.services.meta_learner import MetaPromotionModel
 from app.services.paper_trading import PaperTradingService
 from app.services.regime_detection import RegimeDetector
 from app.time_utils import utcnow
+
+logger = logging.getLogger(__name__)
 
 
 class ResearchMetricGate:
@@ -57,9 +61,51 @@ def _parse_notes(notes: str | None) -> dict:
     try:
         return json.loads(notes)
     except Exception as exc:
-        import logging
-        logging.getLogger(__name__).debug("Could not parse strategy notes JSON: %s", exc)
+        logger.debug("Could not parse strategy notes JSON: %s", exc)
         return {}
+
+
+def _compute_stats_from_folds(folds: list[WalkForwardResult], session: Session) -> dict:
+    """Compute DSR, PSR, permutation p-value and SPY sharpe from stored equity curves.
+
+    Used as fallback when strategy.notes doesn't have pre-computed stats (e.g. manually
+    created strategies that didn't go through research_loop).
+    """
+    from app.services.statistical_tests import (
+        deflated_sharpe_ratio,
+        probabilistic_sharpe_ratio,
+        permutation_test,
+        get_spy_weekly_sharpe,
+    )
+
+    all_returns: list[float] = []
+    for fold in folds:
+        curve = fold.equity_curve or []
+        equities = [p.get("equity", 0.0) for p in curve if isinstance(p, dict)]
+        for i in range(1, len(equities)):
+            prev = equities[i - 1]
+            if prev and prev > 0:
+                all_returns.append((equities[i] - prev) / prev)
+
+    n_strategies = session.execute(
+        select(func.count()).select_from(Strategy)
+    ).scalar() or 1
+
+    dsr = deflated_sharpe_ratio(all_returns, n_trials=n_strategies) if all_returns else 0.0
+    psr = probabilistic_sharpe_ratio(all_returns) if all_returns else 0.0
+    perm_pvalue = permutation_test(all_returns) if len(all_returns) >= 10 else 1.0
+    spy_sharpe = get_spy_weekly_sharpe(session)
+
+    logger.info(
+        "Computed stats from equity curves: dsr=%.3f psr=%.3f perm_p=%.3f spy_sr=%.3f",
+        dsr, psr, perm_pvalue, spy_sharpe,
+    )
+    return {
+        "deflated_sharpe": round(dsr, 4),
+        "probabilistic_sr": round(psr, 4),
+        "permutation_pvalue": round(perm_pvalue, 4),
+        "spy_sharpe": round(spy_sharpe, 4),
+    }
 
 
 class PromotionGate:
@@ -80,6 +126,15 @@ class PromotionGate:
 
         notes = _parse_notes(strategy.notes)
         paper_summary = PaperTradingService(self.session).summary(strategy_id=strategy_id)
+
+        # If strategy wasn't created via research_loop, notes won't have statistical fields.
+        # Compute them fresh from stored fold equity curves so the gate is fair.
+        if notes.get("deflated_sharpe") is None:
+            fresh_stats = _compute_stats_from_folds(folds, self.session)
+            notes.update(fresh_stats)
+            avg_sharpe = research_summary.get("avg_sharpe", 0.0)
+            notes.setdefault("outperforms_spy", avg_sharpe > fresh_stats["spy_sharpe"])
+            notes.setdefault("concentration", {"ok": True})
 
         reasons = []
         if not research_passed:

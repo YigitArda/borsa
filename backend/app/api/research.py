@@ -722,3 +722,21 @@ async def detect_regime(week_ending: str | None = None, db: AsyncSession = Depen
         return {"status": "ok", "regime": regime}
     finally:
         session.close()
+
+
+@router.post("/calibration/run-all")
+async def run_calibration_all():
+    """Trigger calibration computation for all promoted strategies."""
+    from app.tasks.pipeline_tasks import run_calibration
+    from app.tasks.celery_app import enqueue_task
+    task = enqueue_task(run_calibration)
+    return {"status": "queued", "task_id": task.id}
+
+
+@router.post("/alpha-decay/check-all")
+async def run_alpha_decay_check():
+    """Trigger alpha decay check for all promoted strategies."""
+    from app.tasks.pipeline_tasks import check_alpha_decay
+    from app.tasks.celery_app import enqueue_task
+    task = enqueue_task(check_alpha_decay)
+    return {"status": "queued", "task_id": task.id}

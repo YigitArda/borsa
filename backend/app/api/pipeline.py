@@ -1,9 +1,26 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import get_db
+from app.models.stock import Stock
 from app.tasks.celery_app import enqueue_task
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
+
+
+async def _validate_tickers(tickers: list[str] | None, db: AsyncSession) -> list[str]:
+    """Return tickers that exist in DB; warn about unknown ones."""
+    if not tickers:
+        return tickers or []
+    rows = await db.execute(select(Stock.ticker).where(Stock.ticker.in_(tickers)))
+    known = {r[0] for r in rows.all()}
+    unknown = [t for t in tickers if t not in known]
+    if unknown:
+        import logging
+        logging.getLogger(__name__).warning("Unknown tickers (not in DB): %s", unknown)
+    return tickers
 
 
 class TickerList(BaseModel):
@@ -17,9 +34,11 @@ class ImportPath(BaseModel):
 
 
 @router.post("/ingest")
-async def trigger_ingest(body: TickerList | None = None, start: str = "2010-01-01"):
+async def trigger_ingest(body: TickerList | None = None, start: str = "2010-01-01", db: AsyncSession = Depends(get_db)):
     from app.tasks.pipeline_tasks import ingest_prices
     tickers = body.tickers if body else None
+    if tickers:
+        await _validate_tickers(tickers, db)
     task = enqueue_task(ingest_prices, tickers=tickers, start=start)
     return {"task_id": task.id, "status": "queued"}
 

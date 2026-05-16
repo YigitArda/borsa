@@ -27,15 +27,6 @@ from app.models.prediction import WeeklyPrediction
 from app.models.strategy import ModelVersion
 from app.time_utils import utcnow
 
-
-class _DatetimeCompat:
-    @staticmethod
-    def utcnow():
-        return utcnow()
-
-
-datetime = _DatetimeCompat()
-
 logger = logging.getLogger(__name__)
 
 
@@ -101,7 +92,7 @@ class SmokeTestRunner:
 
     async def check_stocks_in_db(self) -> SmokeCheckResult:
         """Verify all 20 MVP tickers exist in the stocks table."""
-        t0 = datetime.utcnow()
+        t0 = utcnow()
         try:
             async with await self._get_db() as db:
                 result = await db.execute(
@@ -110,7 +101,7 @@ class SmokeTestRunner:
                 tickers = {r[0] for r in result.all()}
 
             missing = set(settings.mvp_tickers) - tickers
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
 
             if missing:
                 return self._record(
@@ -128,12 +119,12 @@ class SmokeTestRunner:
                 {"found": len(tickers)},
             )
         except Exception as exc:
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
             return self._record("stocks_in_db", "fail", str(exc), duration)
 
     async def check_prices_daily(self) -> SmokeCheckResult:
         """Verify prices_daily has data for each MVP stock."""
-        t0 = datetime.utcnow()
+        t0 = utcnow()
         try:
             async with await self._get_db() as db:
                 subq = (
@@ -150,7 +141,7 @@ class SmokeTestRunner:
 
             missing = [t for t in settings.mvp_tickers if t not in counts]
             low = [t for t, c in counts.items() if c < 100]
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
 
             if missing:
                 return self._record(
@@ -176,12 +167,12 @@ class SmokeTestRunner:
                 {"min_rows": min(counts.values()) if counts else 0},
             )
         except Exception as exc:
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
             return self._record("prices_daily", "fail", str(exc), duration)
 
     async def check_prices_weekly(self) -> SmokeCheckResult:
         """Verify prices_weekly has data for each MVP stock."""
-        t0 = datetime.utcnow()
+        t0 = utcnow()
         try:
             async with await self._get_db() as db:
                 subq = (
@@ -198,7 +189,7 @@ class SmokeTestRunner:
 
             missing = [t for t in settings.mvp_tickers if t not in counts]
             low = [t for t, c in counts.items() if c < 20]
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
 
             if missing:
                 return self._record(
@@ -224,12 +215,12 @@ class SmokeTestRunner:
                 {"min_rows": min(counts.values()) if counts else 0},
             )
         except Exception as exc:
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
             return self._record("prices_weekly", "fail", str(exc), duration)
 
     async def check_features(self) -> SmokeCheckResult:
         """Verify features_weekly has data and no excessive NaN."""
-        t0 = datetime.utcnow()
+        t0 = utcnow()
         try:
             async with await self._get_db() as db:
                 total = (
@@ -264,7 +255,7 @@ class SmokeTestRunner:
                 ).scalar() or 0
 
             nan_ratio = nulls / total if total else 1.0
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
 
             if total == 0:
                 return self._record(
@@ -290,12 +281,12 @@ class SmokeTestRunner:
                 {"total": total, "nulls": nulls, "distinct_weeks": distinct_weeks},
             )
         except Exception as exc:
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
             return self._record("features", "fail", str(exc), duration)
 
     async def check_labels(self) -> SmokeCheckResult:
         """Verify labels_weekly has data and no lookahead (future labels)."""
-        t0 = datetime.utcnow()
+        t0 = utcnow()
         try:
             async with await self._get_db() as db:
                 total = (
@@ -326,7 +317,7 @@ class SmokeTestRunner:
                     )
                 ).scalar() or 0
 
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
 
             if total == 0:
                 return self._record(
@@ -352,12 +343,12 @@ class SmokeTestRunner:
                 {"total": total, "distinct_targets": distinct_targets},
             )
         except Exception as exc:
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
             return self._record("labels", "fail", str(exc), duration)
 
     async def check_model_trained(self) -> SmokeCheckResult:
         """Verify at least one model file exists in models_store."""
-        t0 = datetime.utcnow()
+        t0 = utcnow()
         try:
             models_dir = Path(settings.models_dir)
             if not models_dir.exists():
@@ -366,7 +357,7 @@ class SmokeTestRunner:
                     count = (
                         await db.execute(select(func.count()).select_from(ModelVersion))
                     ).scalar() or 0
-                duration = (datetime.utcnow() - t0).total_seconds() * 1000
+                duration = (utcnow() - t0).total_seconds() * 1000
                 if count > 0:
                     return self._record(
                         "model_trained",
@@ -383,7 +374,7 @@ class SmokeTestRunner:
                 )
 
             files = [f for f in models_dir.rglob("*") if f.is_file()]
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
 
             if not files:
                 return self._record(
@@ -401,12 +392,12 @@ class SmokeTestRunner:
                 {"dir": str(models_dir), "files": len(files)},
             )
         except Exception as exc:
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
             return self._record("model_trained", "fail", str(exc), duration)
 
     async def check_backtest_trades(self) -> SmokeCheckResult:
         """Verify backtest_runs have associated trades."""
-        t0 = datetime.utcnow()
+        t0 = utcnow()
         try:
             async with await self._get_db() as db:
                 run_count = (
@@ -423,7 +414,7 @@ class SmokeTestRunner:
                     )
                 ).scalar() or 0
 
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
 
             if run_count == 0:
                 return self._record(
@@ -449,12 +440,12 @@ class SmokeTestRunner:
                 {"runs": run_count, "trades": trade_count, "runs_with_trades": runs_with_trades},
             )
         except Exception as exc:
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
             return self._record("backtest_trades", "fail", str(exc), duration)
 
     async def check_weekly_predictions(self) -> SmokeCheckResult:
         """Verify weekly_predictions table has rows."""
-        t0 = datetime.utcnow()
+        t0 = utcnow()
         try:
             async with await self._get_db() as db:
                 total = (
@@ -471,7 +462,7 @@ class SmokeTestRunner:
                     )
                 ).scalar() or 0
 
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
 
             if total == 0:
                 return self._record(
@@ -489,12 +480,12 @@ class SmokeTestRunner:
                 {"total": total, "latest_week": str(latest_week) if latest_week else None, "strategies": distinct_strategies},
             )
         except Exception as exc:
-            duration = (datetime.utcnow() - t0).total_seconds() * 1000
+            duration = (utcnow() - t0).total_seconds() * 1000
             return self._record("weekly_predictions", "fail", str(exc), duration)
 
     async def check_api_endpoints(self) -> SmokeCheckResult:
         """Verify key API endpoints respond successfully."""
-        t0 = datetime.utcnow()
+        t0 = utcnow()
         endpoints = {
             "health": "/health",
             "stocks": "/stocks",
@@ -514,7 +505,7 @@ class SmokeTestRunner:
                     results[name] = {"error": str(exc)}
                     all_ok = False
 
-        duration = (datetime.utcnow() - t0).total_seconds() * 1000
+        duration = (utcnow() - t0).total_seconds() * 1000
 
         if all_ok:
             return self._record(
@@ -539,7 +530,7 @@ class SmokeTestRunner:
     async def run_full_smoke_test(self) -> SmokeTestReport:
         """Run all checks and return a consolidated report."""
         self._results.clear()
-        started_at = datetime.utcnow()
+        started_at = utcnow()
         logger.info("[smoke] Starting full smoke test at %s", started_at.isoformat())
 
         checks = [
@@ -561,7 +552,7 @@ class SmokeTestRunner:
                 logger.exception("[smoke] Unexpected error in %s", check.__name__)
                 self._record(check.__name__, "fail", f"Unhandled exception: {exc}")
 
-        finished_at = datetime.utcnow()
+        finished_at = utcnow()
         summary = {"pass": 0, "fail": 0, "warn": 0, "skip": 0}
         for r in self._results:
             summary[r.status] = summary.get(r.status, 0) + 1

@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     genetic_population_size: int = 10
     population_search_size: int = 10
 
+    # CORS — comma-separated allowed origins. Add production domain here.
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
     # API auth — set API_KEY env var to enable Bearer token protection on write routes
     api_key: str | None = None
     jwt_secret: str | None = None

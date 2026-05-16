@@ -11,7 +11,7 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from statistics import mean
 
-from sqlalchemy import func, select
+from sqlalchemy import Float, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -247,38 +247,69 @@ class PaperTradingService:
             logger.warning("Meta learner outcome recording failed for strategy %s: %s", strategy_id, exc)
 
     def summary(self, week_starting: date | None = None, strategy_id: int | None = None) -> dict:
-        query = select(PaperTrade)
+        """Return aggregated paper trade metrics using SQL aggregates (not Python loops)."""
+        filters = []
         if week_starting is not None:
-            query = query.where(PaperTrade.week_starting == week_starting)
+            filters.append(PaperTrade.week_starting == week_starting)
         if strategy_id is not None:
-            query = query.where(PaperTrade.strategy_id == strategy_id)
+            filters.append(PaperTrade.strategy_id == strategy_id)
 
-        rows = self.session.execute(query).scalars().all()
-        closed = [r for r in rows if r.status == "closed" and r.realized_return is not None]
-        probs = [r.prob_2pct for r in closed if r.prob_2pct is not None]
-        actuals = [1.0 if r.hit_2pct else 0.0 for r in closed if r.hit_2pct is not None]
+        # Status counts via SQL GROUP BY
+        status_q = self.session.execute(
+            select(PaperTrade.status, func.count().label("cnt"))
+            .where(*filters)
+            .group_by(PaperTrade.status)
+        ).all()
+        by_status = {row.status: row.cnt for row in status_q}
+        total = sum(by_status.values())
 
-        hit_rate = mean(actuals) if actuals else None
-        avg_prob = mean(probs) if probs else None
+        # Aggregate metrics for closed trades only
+        closed_filters = [*filters, PaperTrade.status == "closed", PaperTrade.realized_return.is_not(None)]
+        agg = self.session.execute(
+            select(
+                func.count().label("closed"),
+                func.avg(PaperTrade.realized_return).label("avg_realized_return"),
+                func.avg(PaperTrade.expected_return).label("avg_expected_return"),
+                func.avg(PaperTrade.prob_2pct).label("avg_prob_2pct"),
+                func.avg(func.cast(PaperTrade.hit_2pct, Float)).label("hit_rate_2pct"),
+                func.avg(func.cast(PaperTrade.hit_3pct, Float)).label("hit_rate_3pct"),
+                func.avg(func.cast(PaperTrade.hit_loss_2pct, Float)).label("loss_rate_2pct"),
+            ).where(*closed_filters)
+        ).one()
+
+        closed_count = agg.closed or 0
+        hit_rate = agg.hit_rate_2pct
+        avg_prob = agg.avg_prob_2pct
+
+        calibration_error = None
+        if avg_prob is not None and hit_rate is not None:
+            calibration_error = round(avg_prob - hit_rate, 4)
+
+        # Brier score requires per-row data — only load if we have closed trades
         brier = None
-        if probs and len(probs) == len(actuals):
-            brier = mean((p - a) ** 2 for p, a in zip(probs, actuals))
+        if closed_count > 0:
+            brier_rows = self.session.execute(
+                select(PaperTrade.prob_2pct, PaperTrade.hit_2pct)
+                .where(*closed_filters, PaperTrade.prob_2pct.is_not(None), PaperTrade.hit_2pct.is_not(None))
+            ).all()
+            if brier_rows:
+                brier = round(mean((r.prob_2pct - (1.0 if r.hit_2pct else 0.0)) ** 2 for r in brier_rows), 4)
 
-        returns = [r.realized_return for r in closed if r.realized_return is not None]
-        expected = [r.expected_return for r in closed if r.expected_return is not None]
+        def _r(v):
+            return round(float(v), 4) if v is not None else None
 
         return {
-            "total": len(rows),
-            "open": sum(1 for r in rows if r.status == "open"),
-            "pending_data": sum(1 for r in rows if r.status == "pending_data"),
-            "closed": len(closed),
-            "kill_switch_closed": sum(1 for r in rows if r.status == "kill_switch_closed"),
-            "hit_rate_2pct": round(hit_rate, 4) if hit_rate is not None else None,
-            "hit_rate_3pct": round(mean(1.0 if r.hit_3pct else 0.0 for r in closed), 4) if closed else None,
-            "loss_rate_2pct": round(mean(1.0 if r.hit_loss_2pct else 0.0 for r in closed), 4) if closed else None,
-            "avg_prob_2pct": round(avg_prob, 4) if avg_prob is not None else None,
-            "calibration_error_2pct": round(avg_prob - hit_rate, 4) if avg_prob is not None and hit_rate is not None else None,
-            "brier_score_2pct": round(brier, 4) if brier is not None else None,
-            "avg_expected_return": round(mean(expected), 4) if expected else None,
-            "avg_realized_return": round(mean(returns), 4) if returns else None,
+            "total": total,
+            "open": by_status.get("open", 0),
+            "pending_data": by_status.get("pending_data", 0),
+            "closed": closed_count,
+            "kill_switch_closed": by_status.get("kill_switch_closed", 0),
+            "hit_rate_2pct": _r(hit_rate),
+            "hit_rate_3pct": _r(agg.hit_rate_3pct),
+            "loss_rate_2pct": _r(agg.loss_rate_2pct),
+            "avg_prob_2pct": _r(avg_prob),
+            "calibration_error_2pct": calibration_error,
+            "brier_score_2pct": brier,
+            "avg_expected_return": _r(agg.avg_expected_return),
+            "avg_realized_return": _r(agg.avg_realized_return),
         }

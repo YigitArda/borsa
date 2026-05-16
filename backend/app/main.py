@@ -54,9 +54,10 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(LoggingMiddleware)
 
+_cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
@@ -271,7 +272,72 @@ app.add_api_websocket_route("/ws", websocket_endpoint)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    from sqlalchemy import text
+    from app.database import get_engine
+    db_ok = False
+    try:
+        async with get_engine().connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        pass
+    redis_ok = False
+    try:
+        r = _get_redis()
+        if r:
+            r.ping()
+            redis_ok = True
+    except Exception:
+        pass
+    return {"status": "ok", "db": db_ok, "redis": redis_ok}
+
+
+@app.get("/metrics")
+async def metrics():
+    """Lightweight Prometheus-compatible metrics endpoint."""
+    from sqlalchemy import select, func, text as sqlt
+    from app.database import get_sessionmaker
+    from app.models.strategy import Strategy, ModelPromotion
+    from app.models.prediction import PaperTrade, WeeklyPrediction
+    from app.models.job import JobRun
+    import time
+
+    lines = []
+
+    def gauge(name: str, value, labels: str = "") -> str:
+        lab = f"{{{labels}}}" if labels else ""
+        return f"{name}{lab} {value}"
+
+    try:
+        Session = get_sessionmaker()
+        async with Session() as db:
+            n_strategies = await db.scalar(select(func.count()).select_from(Strategy)) or 0
+            n_promoted = await db.scalar(select(func.count()).where(Strategy.status == "promoted")) or 0
+            n_promotions = await db.scalar(select(func.count()).select_from(ModelPromotion)) or 0
+            n_open_trades = await db.scalar(select(func.count()).where(PaperTrade.status == "open")) or 0
+            n_closed_trades = await db.scalar(select(func.count()).where(PaperTrade.status == "closed")) or 0
+            n_predictions = await db.scalar(select(func.count()).select_from(WeeklyPrediction)) or 0
+            n_jobs_failed = await db.scalar(select(func.count()).where(JobRun.status == "failed")) or 0
+
+        lines += [
+            "# HELP borsa_strategies_total Total strategies",
+            "# TYPE borsa_strategies_total gauge",
+            gauge("borsa_strategies_total", n_strategies),
+            gauge("borsa_strategies_promoted", n_promoted),
+            gauge("borsa_model_promotions_total", n_promotions),
+            "# HELP borsa_paper_trades Paper trade counts by status",
+            "# TYPE borsa_paper_trades gauge",
+            gauge("borsa_paper_trades", n_open_trades, 'status="open"'),
+            gauge("borsa_paper_trades", n_closed_trades, 'status="closed"'),
+            gauge("borsa_weekly_predictions_total", n_predictions),
+            gauge("borsa_jobs_failed_total", n_jobs_failed),
+            gauge("borsa_uptime_timestamp", int(time.time())),
+        ]
+    except Exception as exc:
+        lines.append(f"# ERROR collecting metrics: {exc}")
+
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
 
 @app.get("/")

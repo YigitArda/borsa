@@ -5,10 +5,11 @@ Point-in-time note: yfinance fundamentals are NOT point-in-time;
 they return today's restated values. Price/OHLCV data is reliable.
 """
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 
 import pandas as pd
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -333,12 +334,83 @@ class DataIngestionService:
                 logger.info(f"Liquidity filter: excluded {ticker} (avg ${avg_dollar_vol:,.0f}/day)")
         return filtered
 
+    def _last_price_date(self, stock_id: int) -> date | None:
+        """Return the most recent daily price date stored for a given stock."""
+        return self.session.execute(
+            select(func.max(PriceDaily.date)).where(PriceDaily.stock_id == stock_id)
+        ).scalar_one_or_none()
+
+    def ingest_daily_prices_incremental(self, ticker: str, default_start: str = "2010-01-01") -> int:
+        """Pull only the price rows that are missing from the DB.
+
+        For stocks already in the DB: fetches from last_date + 1 day → today.
+        For new stocks: fetches from default_start → today (yfinance returns from
+        the actual IPO date regardless of the requested start, so no data is lost).
+        """
+        stock = self.upsert_stock(ticker)
+        last_date = self._last_price_date(stock.id)
+
+        if last_date is not None:
+            start = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
+        else:
+            start = default_start
+
+        today = date.today().strftime("%Y-%m-%d")
+        if start > today:
+            logger.debug("%s: already up to date (last=%s)", ticker, last_date)
+            return 0
+
+        return self.ingest_daily_prices(ticker, start=start)
+
     def run_full_ingest(self, tickers: list[str] | None = None, start: str = "2010-01-01"):
+        """Sequential incremental ingest (kept for compatibility). Prefer run_full_ingest_parallel."""
         tickers = tickers or settings.mvp_tickers
         for ticker in tickers:
-            logger.info(f"Ingesting {ticker}...")
+            logger.info("Ingesting %s...", ticker)
             try:
-                self.ingest_daily_prices(ticker, start=start)
+                self.ingest_daily_prices_incremental(ticker, default_start=start)
                 self.resample_weekly(ticker)
             except Exception as e:
-                logger.error(f"Failed {ticker}: {e}")
+                logger.error("Failed %s: %s", ticker, e)
+
+    @staticmethod
+    def run_full_ingest_parallel(
+        tickers: list[str],
+        default_start: str = "2010-01-01",
+        max_workers: int = 8,
+        db_url: str | None = None,
+    ) -> dict[str, int | str]:
+        """Ingest tickers in parallel threads, each with its own DB session.
+
+        Returns a dict mapping ticker → rows inserted (or error message string).
+        """
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        url = db_url or settings.sync_database_url
+
+        def _ingest_one(ticker: str) -> tuple[str, int | str]:
+            engine = create_engine(url, pool_pre_ping=True)
+            Session = sessionmaker(bind=engine)
+            session = Session()
+            try:
+                svc = DataIngestionService(session)
+                n = svc.ingest_daily_prices_incremental(ticker, default_start=default_start)
+                svc.resample_weekly(ticker)
+                logger.info("Ingested %s: %d new rows", ticker, n)
+                return ticker, n
+            except Exception as exc:
+                logger.error("Failed %s: %s", ticker, exc)
+                return ticker, str(exc)
+            finally:
+                session.close()
+                engine.dispose()
+
+        results: dict[str, int | str] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_ingest_one, t): t for t in tickers}
+            for future in as_completed(futures):
+                ticker_name, value = future.result()
+                results[ticker_name] = value
+
+        return results

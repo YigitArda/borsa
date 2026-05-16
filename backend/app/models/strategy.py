@@ -51,7 +51,7 @@ class ModelPromotion(Base):
     __tablename__ = "model_promotions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    strategy_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    strategy_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("strategies.id", ondelete="SET NULL"), nullable=True, index=True)
     promoted_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     avg_sharpe: Mapped[float | None] = mapped_column(Float)
     deflated_sharpe: Mapped[float | None] = mapped_column(Float)
