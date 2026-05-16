@@ -39,6 +39,23 @@ class Trade:
 
     def __post_init__(self):
         tc = (settings.transaction_cost_bps + settings.slippage_bps) / 10000
+        if (
+            self.entry_price is None
+            or self.exit_price is None
+            or not np.isfinite(self.entry_price)
+            or not np.isfinite(self.exit_price)
+            or self.entry_price <= 0
+            or self.exit_price <= 0
+        ):
+            logger.warning(
+                "Invalid trade prices for %s: entry=%s exit=%s",
+                self.ticker,
+                self.entry_price,
+                self.exit_price,
+            )
+            self.return_pct = 0.0
+            self.pnl = 0.0
+            return
         raw_return = (self.exit_price - self.entry_price) / self.entry_price
         self.return_pct = raw_return - tc
         self.pnl = self.return_pct  # as fraction of capital
@@ -195,6 +212,14 @@ class Backtester:
                 exit_price, exit_reason = self._apply_sl_tp(
                     ticker, entry_price, week_end, exit_price
                 )
+                if (
+                    entry_price <= 0
+                    or exit_price is None
+                    or not np.isfinite(entry_price)
+                    or not np.isfinite(exit_price)
+                    or exit_price <= 0
+                ):
+                    continue
 
                 t = Trade(
                     ticker=ticker,
@@ -248,7 +273,7 @@ class Backtester:
         """Check intra-period daily prices for stop-loss/take-profit triggers."""
         if not self.stop_loss and not self.take_profit:
             return planned_exit, "normal"
-        if entry_price is None or entry_price == 0:
+        if entry_price is None or entry_price <= 0 or not np.isfinite(entry_price):
             return planned_exit, "normal"
 
         entry_date = self._monday_after(week_end)

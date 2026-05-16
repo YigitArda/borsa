@@ -9,6 +9,7 @@ Outputs stored in social_sentiment table (weekly aggregates).
 """
 import logging
 import hashlib
+import re
 from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
@@ -23,6 +24,27 @@ from app.models.news import SocialSentiment
 logger = logging.getLogger(__name__)
 
 
+class _FallbackSentimentIntensityAnalyzer:
+    POSITIVE_WORDS = {
+        "beat", "beats", "bull", "bullish", "growth", "gain", "gains", "good", "great",
+        "improve", "improves", "improved", "positive", "record", "strong", "up", "win",
+    }
+    NEGATIVE_WORDS = {
+        "bear", "bearish", "bad", "decline", "declines", "drop", "drops", "fall", "falls",
+        "loss", "negative", "risk", "weak", "down", "miss", "misses", "warn", "warning",
+    }
+
+    def polarity_scores(self, text: str) -> dict[str, float]:
+        tokens = re.findall(r"[a-z']+", text.lower())
+        if not tokens:
+            return {"compound": 0.0}
+        pos = sum(token in self.POSITIVE_WORDS for token in tokens)
+        neg = sum(token in self.NEGATIVE_WORDS for token in tokens)
+        total = pos + neg
+        compound = 0.0 if total == 0 else (pos - neg) / total
+        return {"compound": max(-1.0, min(1.0, compound))}
+
+
 class SocialSentimentService:
     def __init__(self, session: Session):
         self.session = session
@@ -34,7 +56,8 @@ class SocialSentimentService:
                 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
                 self._vader = SentimentIntensityAnalyzer()
             except ImportError:
-                pass
+                logger.warning("vaderSentiment is not installed; using fallback lexicon sentiment scorer")
+                self._vader = _FallbackSentimentIntensityAnalyzer()
         return self._vader
 
     def ingest_social_for_ticker(self, ticker: str) -> int:

@@ -55,7 +55,9 @@ def _parse_notes(notes: str | None) -> dict:
         return {}
     try:
         return json.loads(notes)
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).debug("Could not parse strategy notes JSON: %s", exc)
         return {}
 
 
@@ -132,6 +134,8 @@ class PromotionGate:
             holdout_result = validator.evaluate_on_holdout(
                 strategy_id, settings.mvp_tickers
             )
+            if "error" in holdout_result:
+                reasons.append(f"holdout validation failed: {holdout_result['error']}")
             holdout_sharpe = (
                 holdout_result.get("holdout_metrics", {}).get("sharpe")
                 if "error" not in holdout_result
@@ -144,6 +148,8 @@ class PromotionGate:
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("Holdout validation failed: %s", exc)
+            reasons.append(f"holdout validation failed: {exc}")
+            holdout_result = {"error": str(exc)}
 
         summary = {
             **research_summary,
@@ -239,12 +245,12 @@ class PromotionGate:
             probabilistic_sr=summary.get("probabilistic_sr"),
             permutation_pvalue=summary.get("permutation_pvalue"),
             spy_sharpe=summary.get("spy_sharpe"),
-            outperforms_spy=str(summary.get("outperforms_spy")),
+            outperforms_spy=bool(summary.get("outperforms_spy")),
             avg_win_rate=summary.get("avg_win_rate"),
             total_trades=summary.get("total_trades"),
             min_drawdown=summary.get("min_drawdown"),
             avg_profit_factor=summary.get("avg_profit_factor"),
-            concentration_ok=str((summary.get("concentration") or {}).get("ok", False)),
+            concentration_ok=bool((summary.get("concentration") or {}).get("ok", False)),
             details=summary,
         )
         self.session.add(promotion)

@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from sqlalchemy import Boolean, String, Date, DateTime, Float, Integer, UniqueConstraint, func
+from sqlalchemy import Boolean, String, Date, DateTime, Float, Integer, UniqueConstraint, CheckConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -33,6 +33,10 @@ class PaperTrade(Base):
     __tablename__ = "paper_trades"
     __table_args__ = (
         UniqueConstraint("prediction_id", name="uq_paper_trades_prediction"),
+        CheckConstraint(
+            "(status != 'closed') OR (entry_price IS NOT NULL AND exit_price IS NOT NULL AND realized_return IS NOT NULL)",
+            name="ck_paper_trades_closed_values",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

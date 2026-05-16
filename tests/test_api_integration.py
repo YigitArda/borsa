@@ -92,6 +92,18 @@ class TestResearchEndpoints:
         data = response.json()
         assert "active" in data
 
+    def test_arxiv_papers(self, client: TestClient) -> None:
+        response = client.get("/research/papers")
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+
+    def test_arxiv_insights(self, client: TestClient) -> None:
+        response = client.get("/research/insights")
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+
 
 class TestWeeklyPicksEndpoints:
     def test_get_weekly_picks(self, client: TestClient) -> None:

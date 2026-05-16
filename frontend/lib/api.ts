@@ -134,6 +134,34 @@ export const notifications = {
   saveSettings: (settings: NotificationSettings) => put<NotificationSettings>("/notifications/settings", settings),
 };
 
+// ArXiv papers and research insights
+export const arxiv = {
+  papers: (limit: number = 30, unreadOnly: boolean = false) =>
+    get<any[]>(`/research/papers?limit=${limit}&unread_only=${unreadOnly ? "true" : "false"}`),
+  insights: (status?: string, limit: number = 50) =>
+    get<any[]>(`/research/insights?limit=${limit}${status ? `&status=${encodeURIComponent(status)}` : ""}`),
+  scan: (days: number = 7, maxResults: number = 50) =>
+    post<any>(`/research/papers/scan?days=${days}&max_results=${maxResults}`),
+  extract: (limit: number = 10) =>
+    post<any>(`/research/papers/extract?limit=${limit}`),
+  markRead: (paperId: number) =>
+    post<any>(`/research/papers/${paperId}/read`),
+};
+
+// Portfolio simulation
+export const portfolioSimulation = {
+  run: (config: any) => post<any>("/backtest/portfolio", config),
+  get: (simulationId: number) => get<any>(`/backtest/portfolio/${simulationId}`),
+  snapshots: (simulationId: number) => get<any>(`/backtest/portfolio/${simulationId}/snapshots`),
+};
+
+// Ablation analysis
+export const ablation = {
+  run: (strategyId: number) => post<any>(`/research/ablation/${strategyId}`),
+  results: (strategyId: number) => get<any[]>(`/research/ablation/${strategyId}/results`),
+  recommendations: (strategyId: number) => get<any>(`/research/ablation/${strategyId}/recommendations`),
+};
+
 // Jobs
 export const jobs = {
   list: () => get<any>("/jobs"),

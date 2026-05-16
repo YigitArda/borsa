@@ -23,8 +23,19 @@ from app.models.regime import MarketRegime
 from app.models.calibration import ProbabilityCalibration
 from app.models.ablation import AblationResult
 from app.models.kill_switch import KillSwitchEvent
+from app.tasks.celery_app import enqueue_task
 
 router = APIRouter(prefix="/research", tags=["research"])
+
+
+def _sync_session():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.config import settings
+
+    engine = create_engine(settings.sync_database_url)
+    Session = sessionmaker(bind=engine)
+    return Session()
 
 
 # ---------------------------------------------------------------------------
@@ -260,8 +271,7 @@ async def get_risk_warnings(db: AsyncSession = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @router.post("/sector-models")
-async def run_sector_models(tickers: list[str] | None = None):
-    from app.tasks.pipeline_tasks import _get_sync_session
+def run_sector_models(tickers: list[str] | None = None):
     from app.services.model_training import ModelTrainer
     from app.services.research_loop import BASE_STRATEGY
     from app.config import settings
@@ -269,13 +279,10 @@ async def run_sector_models(tickers: list[str] | None = None):
     from sqlalchemy.orm import sessionmaker
     engine = create_engine(settings.sync_database_url)
     Session = sessionmaker(bind=engine)
-    session = Session()
-    try:
+    with Session() as session:
         trainer = ModelTrainer(session, BASE_STRATEGY)
         results = trainer.train_per_sector(tickers or settings.mvp_tickers)
         return {"status": "ok", "sectors": results}
-    finally:
-        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +471,7 @@ async def get_calibration(strategy_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/calibration/{strategy_id}/compute")
-async def compute_calibration(strategy_id: int, db: AsyncSession = Depends(get_db)):
+def compute_calibration(strategy_id: int):
     from app.services.calibration import CalibrationAnalyzer
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -472,15 +479,12 @@ async def compute_calibration(strategy_id: int, db: AsyncSession = Depends(get_d
 
     engine = create_engine(settings.sync_database_url)
     Session = sessionmaker(bind=engine)
-    session = Session()
-    try:
+    with Session() as session:
         analyzer = CalibrationAnalyzer(session)
         analysis = analyzer.analyze_strategy(strategy_id)
         if analysis:
             analyzer.save_analysis(analysis)
         return {"status": "ok", "analysis": analysis}
-    finally:
-        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -488,7 +492,7 @@ async def compute_calibration(strategy_id: int, db: AsyncSession = Depends(get_d
 # ---------------------------------------------------------------------------
 
 @router.post("/ablation/{strategy_id}")
-async def run_ablation(strategy_id: int, db: AsyncSession = Depends(get_db)):
+def run_ablation(strategy_id: int):
     from app.services.ablation import AblationTester
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -496,13 +500,10 @@ async def run_ablation(strategy_id: int, db: AsyncSession = Depends(get_db)):
 
     engine = create_engine(settings.sync_database_url)
     Session = sessionmaker(bind=engine)
-    session = Session()
-    try:
+    with Session() as session:
         tester = AblationTester(session)
         results = tester.run_ablation_test(strategy_id)
         return {"status": "ok", "results": [r.__dict__ if hasattr(r, "__dict__") else r for r in results]}
-    finally:
-        session.close()
 
 
 @router.get("/ablation/{strategy_id}/results")
@@ -527,7 +528,7 @@ async def get_ablation_results(strategy_id: int, db: AsyncSession = Depends(get_
 
 
 @router.get("/ablation/{strategy_id}/recommendations")
-async def get_ablation_recommendations(strategy_id: int, db: AsyncSession = Depends(get_db)):
+def get_ablation_recommendations(strategy_id: int):
     from app.services.ablation import AblationTester
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -535,15 +536,67 @@ async def get_ablation_recommendations(strategy_id: int, db: AsyncSession = Depe
 
     engine = create_engine(settings.sync_database_url)
     Session = sessionmaker(bind=engine)
-    session = Session()
-    try:
+    with Session() as session:
         tester = AblationTester(session)
-        rows = await db.execute(
+        rows = session.execute(
             select(AblationResult).where(AblationResult.strategy_id == strategy_id)
-        )
-        results = rows.scalars().all()
+        ).scalars().all()
         recs = tester.recommend_feature_groups(results)
         return {"strategy_id": strategy_id, "recommendations": recs}
+
+
+# ---------------------------------------------------------------------------
+# ArXiv Papers
+# ---------------------------------------------------------------------------
+
+@router.get("/papers")
+def list_arxiv_papers(limit: int = 30, unread_only: bool = False):
+    from app.services.arxiv_scanner import ArxivScanner
+
+    session = _sync_session()
+    try:
+        return ArxivScanner(session).get_recent(limit=limit, unread_only=unread_only)
+    finally:
+        session.close()
+
+
+@router.get("/insights")
+def list_arxiv_insights(status: str | None = None, limit: int = 50):
+    from app.services.arxiv_scanner import FeatureExtractor
+
+    session = _sync_session()
+    try:
+        return FeatureExtractor(session).get_insights(status=status, limit=limit)
+    finally:
+        session.close()
+
+
+@router.post("/papers/scan")
+def scan_arxiv_papers(days: int = 7, max_results: int = 50):
+    from app.tasks.pipeline_tasks import scan_arxiv_papers as scan_task
+
+    task = enqueue_task(scan_task, days=days, max_results=max_results)
+    return {"task_id": task.id, "status": "queued"}
+
+
+@router.post("/papers/extract")
+def extract_arxiv_papers(limit: int = 10):
+    from app.tasks.pipeline_tasks import extract_arxiv_features as extract_task
+
+    task = enqueue_task(extract_task, limit=limit)
+    return {"task_id": task.id, "status": "queued"}
+
+
+@router.post("/papers/{paper_id}/read")
+def mark_arxiv_paper_read(paper_id: int):
+    from app.services.arxiv_scanner import ArxivScanner
+
+    session = _sync_session()
+    try:
+        scanner = ArxivScanner(session)
+        if not scanner.mark_read(paper_id):
+            raise HTTPException(status_code=404, detail="Paper not found")
+        return {"status": "ok", "paper_id": paper_id}
     finally:
         session.close()
 

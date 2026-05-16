@@ -74,12 +74,33 @@ class PaperTradingService:
             })
 
         stmt = pg_insert(PaperTrade).values(rows)
-        stmt = stmt.on_conflict_do_nothing(index_elements=["prediction_id"])
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["prediction_id"],
+            set_={
+                "week_starting": stmt.excluded.week_starting,
+                "stock_id": stmt.excluded.stock_id,
+                "strategy_id": stmt.excluded.strategy_id,
+                "rank": stmt.excluded.rank,
+                "prob_2pct": stmt.excluded.prob_2pct,
+                "prob_loss_2pct": stmt.excluded.prob_loss_2pct,
+                "expected_return": stmt.excluded.expected_return,
+                "confidence": stmt.excluded.confidence,
+                "signal_summary": stmt.excluded.signal_summary,
+                "planned_exit_date": stmt.excluded.planned_exit_date,
+                "status": stmt.excluded.status,
+            },
+            where=PaperTrade.status != "closed",
+        )
         result = self.session.execute(stmt)
         self.session.commit()
-        inserted = result.rowcount or 0
-        logger.info("Opened %s paper trades for week %s", inserted, week_starting)
-        return inserted
+        affected = result.rowcount
+        if affected is None or affected < 0:
+            affected = len(rows)
+        if affected == 0:
+            logger.info("Paper trades already closed for week %s; no rows refreshed", week_starting)
+        else:
+            logger.info("Opened or refreshed %s paper trades for week %s", affected, week_starting)
+        return affected
 
     def evaluate_open_positions(self, as_of: date | None = None) -> dict:
         """Close paper trades whose planned exit date has passed and prices exist."""
@@ -129,7 +150,7 @@ class PaperTradingService:
             )
             entry_price = entry_prices["open"] or entry_prices["close"]
             exit_price = exit_prices["close"] or exit_prices["open"]
-            if not entry_price or not exit_price:
+            if entry_price is None or exit_price is None or entry_price <= 0 or exit_price <= 0:
                 trade.status = "pending_data"
                 pending += 1
                 continue
@@ -195,7 +216,8 @@ class PaperTradingService:
         if strategy.notes:
             try:
                 notes = json.loads(strategy.notes)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Could not parse strategy notes JSON for strategy %s: %s", strategy_id, exc)
                 notes = {}
         folds = self.session.execute(
             select(WalkForwardResult)

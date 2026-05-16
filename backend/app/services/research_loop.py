@@ -14,6 +14,7 @@ from datetime import date, timedelta
 
 import numpy as np
 from sqlalchemy import func as sqlfunc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -249,6 +250,7 @@ class ResearchLoop:
         self.proposer = StrategyProposer(self.mutation_tracker, self.rl_agent)
         self.gate = AcceptanceGate()
         self._holdout_cutoff = self._compute_holdout_cutoff()
+        self._fold_metrics_cache: dict[int, list[dict]] = {}
 
     def _compute_holdout_cutoff(self) -> date:
         from dateutil.relativedelta import relativedelta
@@ -262,7 +264,9 @@ class ResearchLoop:
     def _consume_trial_budget(self) -> tuple[bool, dict]:
         today = date.today()
         budget = self.session.execute(
-            select(ResearchTrialBudget).where(ResearchTrialBudget.budget_date == today)
+            select(ResearchTrialBudget)
+            .where(ResearchTrialBudget.budget_date == today)
+            .with_for_update()
         ).scalar_one_or_none()
         if budget is None:
             budget = ResearchTrialBudget(
@@ -271,7 +275,17 @@ class ResearchLoop:
                 max_iterations=settings.research_max_daily_iterations,
             )
             self.session.add(budget)
-            self.session.flush()
+            try:
+                self.session.flush()
+            except IntegrityError:
+                self.session.rollback()
+                budget = self.session.execute(
+                    select(ResearchTrialBudget)
+                    .where(ResearchTrialBudget.budget_date == today)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if budget is None:
+                    raise
 
         budget.max_iterations = settings.research_max_daily_iterations
         if budget.iterations_used >= budget.max_iterations:
@@ -294,12 +308,17 @@ class ResearchLoop:
     def _fold_metrics_for_strategy(self, strategy_id: int | None) -> list[dict]:
         if strategy_id is None:
             return []
+        cached = self._fold_metrics_cache.get(strategy_id)
+        if cached is not None:
+            return copy.deepcopy(cached)
         rows = self.session.execute(
             select(WalkForwardResult)
             .where(WalkForwardResult.strategy_id == strategy_id)
             .order_by(WalkForwardResult.fold)
         ).scalars().all()
-        return [r.metrics for r in rows if r.metrics]
+        metrics = [r.metrics for r in rows if r.metrics]
+        self._fold_metrics_cache[strategy_id] = copy.deepcopy(metrics)
+        return metrics
 
     def _avg_sharpe(self, metrics: list[dict]) -> float:
         vals = [m.get("sharpe", 0.0) for m in metrics if m]
@@ -363,7 +382,7 @@ class ResearchLoop:
             except Exception as exc:
                 logger.warning("RL agent update failed: %s", exc)
 
-    def run_one_iteration(self, base_strategy_id: int | None = None) -> dict:
+    def run_one_iteration(self, base_strategy_id: int | None = None, base_metrics: list[dict] | None = None) -> dict:
         """Run one research iteration: propose → train → gate → maybe promote."""
         budget_ok, budget_info = self._consume_trial_budget()
         if not budget_ok:
@@ -377,7 +396,8 @@ class ResearchLoop:
             base_config = copy.deepcopy(self.base_config)
             generation = 0
 
-        base_metrics = self._fold_metrics_for_strategy(base_strategy_id)
+        if base_metrics is None:
+            base_metrics = self._fold_metrics_for_strategy(base_strategy_id)
         optimized_config, used_optuna = self._maybe_optimize_base_config(base_config)
         if used_optuna:
             new_config = optimized_config
@@ -485,12 +505,12 @@ class ResearchLoop:
             self.session.commit()
             log_strategy_run(strategy.id, new_config, summary, "candidate")
             logger.info(f"Strategy {strategy.id} CANDIDATE: {summary}")
-            return {"status": "candidate", "strategy_id": strategy.id, **summary}
+            return {"status": "candidate", "strategy_id": strategy.id, "_fold_metrics": fold_metrics, **summary}
         else:
             self.session.commit()
             log_strategy_run(strategy.id, new_config, summary, "rejected")
             logger.info(f"Strategy {strategy.id} REJECTED: {summary}")
-            return {"status": "rejected", "strategy_id": strategy.id, **summary}
+            return {"status": "rejected", "strategy_id": strategy.id, "_fold_metrics": fold_metrics, **summary}
 
     def evaluate_config(self, config: dict, parent_strategy_id: int | None = None, generation: int = 0) -> tuple[list[dict], int | None]:
         """Evaluate and persist one concrete config for genetic/population search."""
@@ -584,11 +604,13 @@ class ResearchLoop:
             return [self.run_population(n_generations=n_generations or n_iterations, base_strategy_id=base_strategy_id)]
 
         results = []
+        base_metrics = self._fold_metrics_for_strategy(base_strategy_id) if base_strategy_id is not None else []
         for i in range(n_iterations):
             logger.info(f"Research iteration {i + 1}/{n_iterations}")
-            result = self.run_one_iteration(base_strategy_id)
+            result = self.run_one_iteration(base_strategy_id, base_metrics=base_metrics)
             results.append(result)
             # If a strategy passed research gates, use it as next base while it paper-tests.
             if result.get("status") == "candidate":
                 base_strategy_id = result.get("strategy_id")
+                base_metrics = result.get("_fold_metrics") or []
         return results
