@@ -21,6 +21,7 @@ from app.services.pead_factor import PEAD_FEATURES
 from app.services.short_interest_factor import SHORT_INTEREST_FEATURES
 from app.services.price_nlp import PRICE_NLP_FEATURES
 from app.services.alpha_factor_combiner import ALPHA_COMBO_FEATURES
+from app.time_utils import utcnow
 
 router = APIRouter(prefix="/data-quality", tags=["data-quality"])
 
@@ -367,7 +368,7 @@ async def data_status_summary(db: AsyncSession = Depends(get_db)):
     ]
 
     return {
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": utcnow().isoformat(),
         "stock_count": len(active_stocks),
         "price_coverage": {
             "total_rows": price_total_rows,

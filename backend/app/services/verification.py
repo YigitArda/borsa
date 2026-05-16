@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +25,16 @@ from app.models.feature import FeatureWeekly, LabelWeekly
 from app.models.backtest import BacktestRun, BacktestTrade
 from app.models.prediction import WeeklyPrediction
 from app.models.strategy import ModelVersion
+from app.time_utils import utcnow
+
+
+class _DatetimeCompat:
+    @staticmethod
+    def utcnow():
+        return utcnow()
+
+
+datetime = _DatetimeCompat()
 
 logger = logging.getLogger(__name__)
 

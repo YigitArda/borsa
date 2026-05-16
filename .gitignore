@@ -11,6 +11,8 @@ models_store/
 .pytest_tmp/
 .pytest_tmp*/
 .pytest_cache/
+.pytest_cache_local/
+pytest-cache-files-*/
 *.log
 
 node_modules/

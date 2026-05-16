@@ -1,5 +1,8 @@
+import asyncio
 import hashlib
+import inspect
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -34,7 +37,18 @@ logger = logging.getLogger(__name__)
 # Configure structured logging on startup
 configure_logging(log_level="INFO", json=True)
 
-app = FastAPI(title="Borsa Research Engine", version="1.0.0")
+if asyncio.iscoroutinefunction is not inspect.iscoroutinefunction:
+    asyncio.iscoroutinefunction = inspect.iscoroutinefunction  # type: ignore[assignment]
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    if settings.database_url.startswith("sqlite"):
+        async with get_engine().begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    yield
+
+
+app = FastAPI(title="Borsa Research Engine", version="1.0.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -50,13 +64,6 @@ app.add_middleware(
 )
 
 # Optional API key auth — only enforced if API_KEY is set in env
-@app.on_event("startup")
-async def ensure_sqlite_schema() -> None:
-    """Create tables automatically for local SQLite runtimes."""
-    if settings.database_url.startswith("sqlite"):
-        async with get_engine().begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
 _WRITE_ROUTES = {
     "/pipeline/",
     "/strategies/research/",

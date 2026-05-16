@@ -10,6 +10,7 @@ from fastapi import APIRouter, status
 from pydantic import BaseModel
 
 from app.services.verification import SmokeTestRunner, SmokeTestReport, SmokeCheckResult
+from app.time_utils import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -91,4 +92,4 @@ async def run_verification() -> SmokeReportSchema:
     description="Lightweight endpoint that returns the current verification subsystem health.",
 )
 async def verification_status() -> HealthSchema:
-    return HealthSchema(status="ok", timestamp=datetime.utcnow())
+    return HealthSchema(status="ok", timestamp=utcnow())

@@ -10,6 +10,8 @@ import httpx
 import numpy as np
 import pandas as pd
 
+from app.time_utils import utcnow
+
 logger = logging.getLogger(__name__)
 
 
@@ -177,8 +179,8 @@ class PEADNLPStrategy:
         fmp_api_key: str | None = None,
         earnings_events: dict[str, list[EarningsEvent]] | None = None,
     ) -> pd.DataFrame:
-        start = datetime.utcnow() - timedelta(days=365)
-        end = datetime.utcnow() + timedelta(days=30)
+        start = utcnow() - timedelta(days=365)
+        end = utcnow() + timedelta(days=30)
         self.earnings_cache = earnings_events or self.fetch_earnings_calendar(
             tickers, start, end, fmp_api_key
         )

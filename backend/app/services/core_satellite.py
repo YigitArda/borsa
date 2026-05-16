@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
+from app.time_utils import utcnow
+
 
 @dataclass
 class PortfolioLayer:
@@ -84,7 +86,7 @@ class CoreSatelliteAllocator:
         total_risk = self._calculate_total_risk(allocations)
 
         record = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utcnow().isoformat(),
             "regime": regime,
             "targets": targets,
             "allocations": allocations,

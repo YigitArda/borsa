@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from app.time_utils import utcnow
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,7 +33,7 @@ class HypothesisEntry:
     min_win_rate: float = 0.35
     max_correlation_to_existing: float = 0.70
     status: str = "UNTESTED"
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: utcnow().isoformat())
     validated_at: str | None = None
     live_at: str | None = None
     decayed_at: str | None = None
@@ -182,7 +184,7 @@ class HypothesisRegistry:
                 "DECAYED": "decayed_at",
             }.get(new_status)
             if timestamp_field:
-                updates[timestamp_field] = datetime.utcnow().isoformat()
+                updates[timestamp_field] = utcnow().isoformat()
             if results is not None:
                 key = "live_results" if new_status in {"LIVE", "DECAYED"} else "backtest_results"
                 updates[key] = json.dumps(results)

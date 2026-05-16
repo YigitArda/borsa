@@ -5,8 +5,11 @@ from __future__ import annotations
 import os
 import sys
 import shutil
+import warnings
 from uuid import uuid4
 from pathlib import Path
+
+from _pytest.warning_types import PytestCacheWarning
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -20,6 +23,13 @@ os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{(TEST_TMP / 'test.d
 os.environ.setdefault("SYNC_DATABASE_URL", f"sqlite:///{(TEST_TMP / 'test.db').as_posix()}")
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("JWT_SECRET", "pytest-jwt-secret")
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*asyncio.iscoroutinefunction.*",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings("ignore", category=PytestCacheWarning)
 
 # Add backend to path before importing the app
 sys.path.insert(0, str(BACKEND))

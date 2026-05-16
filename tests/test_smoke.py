@@ -13,6 +13,7 @@ from app.services.verification import (
     SmokeCheckResult,
     run_smoke_test_sync,
 )
+from app.time_utils import utcnow
 
 
 # ------------------------------------------------------------------
@@ -474,8 +475,8 @@ def test_run_smoke_test_sync():
     with patch.object(SmokeTestRunner, "run_full_smoke_test", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = SmokeTestReport(
             overall="pass",
-            started_at=datetime.utcnow(),
-            finished_at=datetime.utcnow(),
+            started_at=utcnow(),
+            finished_at=utcnow(),
             checks=[],
             summary={"pass": 1},
         )
