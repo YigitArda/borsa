@@ -201,6 +201,54 @@ def ingest_social(self, tickers: list[str] | None = None):
         return {"status": "ok", "results": results}
 
 
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.backfill_news")
+def backfill_news(
+    self,
+    tickers: list[str] | None = None,
+    start: str = "2001-01-01",
+    end: str | None = None,
+    sources: list[str] | None = None,
+):
+    """Backfill historical news from GDELT + SEC EDGAR for a date range.
+
+    2001-2012: SEC EDGAR only (GDELT does not exist before 2013).
+    2013+:     both GDELT and SEC EDGAR.
+    """
+    from app.services.gdelt_news import GDELTNewsService, GDELT_START
+    from app.services.sec_news import SECNewsService
+
+    sources = sources or ["gdelt", "sec"]
+    tickers = tickers or settings.mvp_tickers
+    start_date = date.fromisoformat(start)
+    end_date = date.fromisoformat(end) if end else date.today()
+
+    sec_weeks = 0
+    gdelt_weeks = 0
+
+    with _sync_session() as session:
+        if "sec" in sources:
+            sec_svc = SECNewsService(session)
+            sec_results = sec_svc.backfill(tickers, start_date, end_date)
+            sec_weeks = sum(sec_results.values())
+
+        if "gdelt" in sources:
+            gdelt_start = max(start_date, GDELT_START)
+            if gdelt_start <= end_date:
+                gdelt_svc = GDELTNewsService(session)
+                gdelt_results = gdelt_svc.backfill(tickers, gdelt_start, end_date)
+                gdelt_weeks = sum(gdelt_results.values())
+            else:
+                logger.info("GDELT backfill skipped: start %s before GDELT availability %s", start_date, GDELT_START)
+
+    return {
+        "status": "ok",
+        "sec_weeks": sec_weeks,
+        "gdelt_weeks": gdelt_weeks,
+        "date_range": f"{start_date}  {end_date}",
+        "sources": sources,
+    }
+
+
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.backfill_social")
 def backfill_social(
     self,

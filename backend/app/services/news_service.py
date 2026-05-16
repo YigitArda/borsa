@@ -17,6 +17,8 @@ from sqlalchemy.orm import Session
 from app.models.stock import Stock
 from app.models.news import NewsArticle, NewsAnalysis
 from app.services.social_sentiment_common import get_vader_analyzer
+from app.services.gdelt_news import GDELTNewsService
+from app.services.sec_news import SECNewsService
 
 logger = logging.getLogger(__name__)
 
@@ -197,4 +199,23 @@ class NewsService:
             except Exception as e:
                 logger.error(f"News failed {ticker}: {e}")
                 results[ticker] = 0
+
+        # GDELT recent (last 7 days)
+        try:
+            gdelt = GDELTNewsService(self.session)
+            gdelt_results = gdelt.ingest_recent(tickers)
+            for t, n in gdelt_results.items():
+                results[t] = results.get(t, 0) + n
+        except Exception as e:
+            logger.error("GDELT recent ingest failed: %s", e)
+
+        # SEC EDGAR recent (last 30 days)
+        try:
+            sec = SECNewsService(self.session)
+            sec_results = sec.ingest_recent(tickers)
+            for t, n in sec_results.items():
+                results[t] = results.get(t, 0) + n
+        except Exception as e:
+            logger.error("SEC news recent ingest failed: %s", e)
+
         return results
