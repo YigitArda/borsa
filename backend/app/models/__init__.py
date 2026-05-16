@@ -26,6 +26,7 @@ from app.models.research_budget import ResearchTrialBudget
 from app.models.pead_signal import PEADSignal
 from app.models.short_interest import ShortInterestData
 from app.models.arxiv_paper import ArxivPaper, ResearchInsight
+from app.models.intraday_event import IntradayEvent
 
 __all__ = [
     "Stock", "StockUniverseSnapshot", "TickerAlias", "CorporateAction",
@@ -57,4 +58,5 @@ __all__ = [
     "ShortInterestData",
     "ArxivPaper",
     "ResearchInsight",
+    "IntradayEvent",
 ]

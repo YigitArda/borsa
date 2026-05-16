@@ -6,7 +6,7 @@ to prevent lookahead bias. Features are stored in long format.
 """
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import timedelta
+from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
@@ -37,7 +37,7 @@ from app.services.alpha_factor_combiner import AlphaFactorCombiner, ALPHA_COMBO_
 
 logger = logging.getLogger(__name__)
 
-FEATURE_SET_VERSION = "v6"  # bumped: macro features expanded with FRED/DBnomics series
+FEATURE_SET_VERSION = "v7"  # bumped: intraday spike history features added
 
 TECHNICAL_FEATURES = [
     "rsi_14", "macd", "macd_signal", "macd_hist",
@@ -54,6 +54,16 @@ TECHNICAL_FEATURES = [
     "price_to_sma50",
     "price_to_sma200",
     "realized_vol",
+]
+
+SPIKE_FEATURES = [
+    "spike_count_12w",          # number of spike weeks (>=4% intraday) in last 12 weeks
+    "spike_freq_12w",           # fraction of weeks with spike
+    "avg_intraday_up_12w",      # avg max intraday up move (last 12w)
+    "avg_intraday_down_12w",    # avg max intraday down move (last 12w)
+    "last_spike_magnitude",     # max(up, down) of most recent week
+    "earnings_spike_count_12w", # spikes coinciding with earnings
+    "spike_predictor_score",    # ML model probability of spike this week
 ]
 
 FINANCIAL_FEATURES = [
@@ -107,6 +117,7 @@ ALL_FEATURES = (
     + BEHAVIORAL_FEATURES + PRICE_NLP_FEATURES
     + MOMENTUM_LOWVOL_FEATURES + MOMENTUM_LOWVOL_BATCH_FEATURES
     + PEAD_FEATURES + SHORT_INTEREST_FEATURES + ALPHA_COMBO_FEATURES
+    + SPIKE_FEATURES
 )
 
 TARGET_NAMES = [
@@ -268,6 +279,14 @@ class FeatureEngineeringService:
                 features.update(alpha_features)
             except Exception as e:
                 logger.warning("Alpha combiner features failed [%s]: %s", stock.ticker, e)
+
+            # Intraday spike history features
+            try:
+                week_end_date = week_end.date() if hasattr(week_end, "date") else week_end
+                spike_features = self._compute_spike_features(stock.id, week_end_date)
+                features.update(spike_features)
+            except Exception as e:
+                logger.warning("Spike features failed [%s]: %s", stock.ticker, e)
 
             for fname, fval in features.items():
                 feature_rows.append({
@@ -498,6 +517,62 @@ class FeatureEngineeringService:
         )
         self.session.execute(stmt)
         self.session.commit()
+
+    def _compute_spike_features(self, stock_id: int, week_end) -> dict[str, float]:
+        """Compute intraday spike history features from IntradayEvent table.
+
+        Uses only data BEFORE week_end (no lookahead).
+        Returns empty dict if no event data is available yet.
+        """
+        from app.models.intraday_event import IntradayEvent
+        from datetime import timedelta
+
+        week_end_date = week_end if isinstance(week_end, date) else week_end.date() if hasattr(week_end, "date") else week_end
+
+        cutoff = week_end_date - timedelta(weeks=1)   # exclude current week (no lookahead)
+        lookback = week_end_date - timedelta(weeks=12)
+
+        events = self.session.execute(
+            select(IntradayEvent).where(
+                IntradayEvent.stock_id == stock_id,
+                IntradayEvent.week_ending >= lookback,
+                IntradayEvent.week_ending <= cutoff,
+            )
+        ).scalars().all()
+
+        if not events:
+            return {f: 0.0 for f in SPIKE_FEATURES if f != "spike_predictor_score"}
+
+        THRESH = 0.04
+        spikes = [e for e in events if max(e.max_intraday_up_pct or 0, e.max_intraday_down_pct or 0) >= THRESH]
+        ups = [e.max_intraday_up_pct or 0.0 for e in events]
+        downs = [e.max_intraday_down_pct or 0.0 for e in events]
+
+        sorted_events = sorted(events, key=lambda e: e.week_ending)
+        last = sorted_events[-1]
+        last_mag = max(last.max_intraday_up_pct or 0, last.max_intraday_down_pct or 0)
+
+        features: dict[str, float] = {
+            "spike_count_12w": float(len(spikes)),
+            "spike_freq_12w": len(spikes) / max(len(events), 1),
+            "avg_intraday_up_12w": float(np.mean(ups)) if ups else 0.0,
+            "avg_intraday_down_12w": float(np.mean(downs)) if downs else 0.0,
+            "last_spike_magnitude": last_mag,
+            "earnings_spike_count_12w": float(sum(1 for e in spikes if e.has_earnings)),
+        }
+
+        # Spike predictor score — lazy-load predictor
+        try:
+            from app.services.intraday_event_detector import IntradayEventDetector
+            detector = IntradayEventDetector(self.session)
+            if detector.load_spike_predictor():
+                features["spike_predictor_score"] = detector.spike_probability(stock_id, week_end_date)
+            else:
+                features["spike_predictor_score"] = 0.0
+        except Exception:
+            features["spike_predictor_score"] = 0.0
+
+        return features
 
     def compute_valuation_percentiles_all(self, tickers: list[str]) -> int:
         """

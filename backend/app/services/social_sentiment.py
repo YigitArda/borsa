@@ -1,18 +1,22 @@
 """
-Social sentiment ingestion.
+Social sentiment orchestrator.
 
-Source: Reddit WSB/investing subreddits via pushshift.io (free, no auth needed)
-        or yfinance .news as a proxy for attention signals.
-        StockTwits requires registration; stubbed here with yfinance proxy.
+Sources (in priority order):
+  1. Reddit  — real data via Pushshift (historical) + PRAW (recent)
+  2. Twitter — real data via X API v2 (Pro = full archive; Free = last 7 days)
+  3. yfinance_proxy — fallback if neither Reddit nor Twitter has data
 
-Outputs stored in social_sentiment table (weekly aggregates).
+Point-in-time guarantee:
+  Tüm kaynaklar, tweet/post yayın tarihini o haftanın Friday'ine (week_ending)
+  atayarak saklar. `get_weekly_social_features` sadece istenen week_ending'i
+  döndürür — backtest sırasında gelecek bilgi sızıntısı olmaz.
 """
+from __future__ import annotations
+
 import logging
-import hashlib
 import re
 from datetime import date, datetime, timedelta, timezone
 
-import pandas as pd
 import yfinance as yf
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -46,40 +50,142 @@ class _FallbackSentimentIntensityAnalyzer:
 
 
 class SocialSentimentService:
+    """Orchestrates Reddit, Twitter, and yfinance-proxy ingestion."""
+
     def __init__(self, session: Session):
         self.session = session
         self._vader = None
 
-    def _get_vader(self):
-        if self._vader is None:
-            try:
-                from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-                self._vader = SentimentIntensityAnalyzer()
-            except ImportError:
-                logger.warning("vaderSentiment is not installed; using fallback lexicon sentiment scorer")
-                self._vader = _FallbackSentimentIntensityAnalyzer()
-        return self._vader
+    # ------------------------------------------------------------------
+    # Recent ingestion (weekly pipeline hook)
+    # ------------------------------------------------------------------
 
-    def ingest_social_for_ticker(self, ticker: str) -> int:
+    def run_all(self, tickers: list[str]) -> dict[str, int]:
+        """Ingest recent social data from all configured sources."""
+        results: dict[str, int] = {}
+
+        # Reddit — last 4 weeks via PRAW / Pushshift
+        try:
+            from app.services.reddit_sentiment import RedditSentimentService
+            reddit = RedditSentimentService(self.session)
+            reddit_results = reddit.ingest_recent(tickers)
+            for t, n in reddit_results.items():
+                results[t] = results.get(t, 0) + n
+            logger.info("Reddit ingest done: %d tickers", len(reddit_results))
+        except Exception as exc:
+            logger.warning("Reddit ingest skipped: %s", exc)
+
+        # Twitter — last 7 days (free tier)
+        try:
+            from app.services.twitter_sentiment import TwitterSentimentService
+            twitter = TwitterSentimentService(self.session)
+            twitter_results = twitter.ingest_recent(tickers)
+            for t, n in twitter_results.items():
+                results[t] = results.get(t, 0) + n
+            logger.info("Twitter ingest done: %d tickers", len(twitter_results))
+        except Exception as exc:
+            logger.warning("Twitter ingest skipped: %s", exc)
+
+        # yfinance proxy — only for tickers with no real data this week
+        _friday = self._this_friday()
+        for ticker in tickers:
+            if results.get(ticker, 0) == 0:
+                try:
+                    n = self._ingest_yfinance_proxy(ticker, _friday)
+                    results[ticker] = n
+                except Exception as exc:
+                    logger.debug("yfinance proxy failed %s: %s", ticker, exc)
+                    results[ticker] = 0
+
+        return results
+
+    # ------------------------------------------------------------------
+    # Historical backfill (triggered manually or via API)
+    # ------------------------------------------------------------------
+
+    def backfill(
+        self,
+        tickers: list[str],
+        start: date,
+        end: date,
+        delay_sec: float = 1.0,
+    ) -> dict[str, dict[str, int]]:
+        """Backfill Reddit + Twitter for a historical date range.
+
+        Twitter backfill only works with a Pro/Academic bearer token.
         """
-        Approximate social sentiment using yfinance news as a proxy.
-        Real Reddit/StockTwits API requires credentials — this is a free-tier approximation.
+        from app.services.reddit_sentiment import RedditSentimentService
+        from app.services.twitter_sentiment import TwitterSentimentService
+
+        reddit = RedditSentimentService(self.session)
+        twitter = TwitterSentimentService(self.session)
+
+        reddit_results = reddit.backfill(tickers, start, end, delay_sec=delay_sec)
+        twitter_results = twitter.backfill(tickers, start, end, delay_sec=delay_sec)
+
+        combined: dict[str, dict[str, int]] = {}
+        for t in tickers:
+            combined[t] = {
+                "reddit": reddit_results.get(t, 0),
+                "twitter": twitter_results.get(t, 0),
+            }
+
+        return combined
+
+    # ------------------------------------------------------------------
+    # Feature retrieval (PIT safe — called from feature engineering)
+    # ------------------------------------------------------------------
+
+    def get_weekly_social_features(self, stock_id: int, week_ending: date) -> dict[str, float]:
+        """Aggregate social features across all sources for a given week.
+
+        PIT safe: reads only rows with the exact week_ending, which were
+        written from data that existed at or before that date.
         """
-        stock = self.session.execute(select(Stock).where(Stock.ticker == ticker)).scalar_one_or_none()
+        rows = self.session.execute(
+            select(SocialSentiment).where(
+                SocialSentiment.stock_id == stock_id,
+                SocialSentiment.week_ending == str(week_ending),
+            )
+        ).scalars().all()
+
+        if not rows:
+            return self._zero_features()
+
+        # Average across sources, weighted by mention count
+        total_mentions = sum(r.mention_count or 0 for r in rows)
+        if total_mentions == 0:
+            return self._zero_features()
+
+        def wavg(attr: str) -> float:
+            return sum((r.mention_count or 0) * float(getattr(r, attr) or 0) for r in rows) / total_mentions
+
+        return {
+            "social_mention_count": float(total_mentions),
+            "social_mention_momentum": wavg("mention_momentum"),
+            "social_sentiment_polarity": wavg("sentiment_polarity"),
+            "social_hype_risk": max(float(r.hype_risk or 0) for r in rows),
+            "social_abnormal_attention": wavg("abnormal_attention"),
+        }
+
+    # ------------------------------------------------------------------
+    # yfinance proxy (fallback for tickers with no real data)
+    # ------------------------------------------------------------------
+
+    def _ingest_yfinance_proxy(self, ticker: str, this_friday: date) -> int:
+        stock = self.session.execute(
+            select(Stock).where(Stock.ticker == ticker)
+        ).scalar_one_or_none()
         if not stock:
             return 0
 
         try:
             news_items = yf.Ticker(ticker).news or []
-        except Exception as e:
-            logger.warning(f"Social proxy fetch failed {ticker}: {e}")
+        except Exception as exc:
+            logger.debug("yfinance proxy fetch failed %s: %s", ticker, exc)
             return 0
 
         vader = self._get_vader()
-        if not vader or not news_items:
-            return 0
-
-        # Group by week
         week_data: dict[date, list[float]] = {}
         for item in news_items:
             headline = item.get("title", "") or ""
@@ -87,7 +193,6 @@ class SocialSentimentService:
             if not pub_ts:
                 continue
             pub_dt = datetime.fromtimestamp(pub_ts, tz=timezone.utc).date()
-            # Round to Friday (week ending)
             days_to_friday = (4 - pub_dt.weekday()) % 7
             week_end = pub_dt + timedelta(days=days_to_friday)
             score = vader.polarity_scores(headline)["compound"]
@@ -96,21 +201,21 @@ class SocialSentimentService:
         if not week_data:
             return 0
 
-        rows = []
         sorted_weeks = sorted(week_data.keys())
         mention_counts = [len(week_data[w]) for w in sorted_weeks]
-        avg_mentions = sum(mention_counts) / len(mention_counts) if mention_counts else 1
-        std_mentions = pd.Series(mention_counts).std() or 1
+        avg_mentions = sum(mention_counts) / max(len(mention_counts), 1)
+        import numpy as np
+        std_mentions = float(np.std(mention_counts)) or 1.0
 
+        rows = []
         for i, week in enumerate(sorted_weeks):
             scores = week_data[week]
             n = len(scores)
-            avg_sentiment = sum(scores) / n
-            momentum = (n - (mention_counts[i - 1] if i > 0 else n)) / max(mention_counts[i - 1], 1) if i > 0 else 0.0
-            abnormal_attention = (n - avg_mentions) / std_mentions
-
+            avg_sentiment = sum(scores) / max(n, 1)
+            prev_n = mention_counts[i - 1] if i > 0 else n
+            momentum = (n - prev_n) / max(prev_n, 1)
+            abnormal = (n - avg_mentions) / std_mentions
             hype_risk = 1.0 if (n > avg_mentions + 2 * std_mentions and avg_sentiment > 0.3) else 0.0
-
             rows.append({
                 "stock_id": stock.id,
                 "week_ending": str(week),
@@ -118,9 +223,12 @@ class SocialSentimentService:
                 "mention_momentum": round(momentum, 4),
                 "sentiment_polarity": round(avg_sentiment, 4),
                 "hype_risk": hype_risk,
-                "abnormal_attention": round(abnormal_attention, 4),
+                "abnormal_attention": round(abnormal, 4),
                 "source": "yfinance_proxy",
             })
+
+        if not rows:
+            return 0
 
         stmt = pg_insert(SocialSentiment).values(rows)
         stmt = stmt.on_conflict_do_update(
@@ -135,42 +243,34 @@ class SocialSentimentService:
         )
         self.session.execute(stmt)
         self.session.commit()
-        logger.info(f"Social sentiment: {ticker} — {len(rows)} weeks")
         return len(rows)
 
-    def get_weekly_social_features(self, stock_id: int, week_ending: date) -> dict[str, float]:
-        """Return social features for the given week."""
-        row = self.session.execute(
-            select(SocialSentiment)
-            .where(
-                SocialSentiment.stock_id == stock_id,
-                SocialSentiment.week_ending == str(week_ending),
-            )
-        ).scalar_one_or_none()
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
-        if not row:
-            return {
-                "social_mention_count": 0.0,
-                "social_mention_momentum": 0.0,
-                "social_sentiment_polarity": 0.0,
-                "social_hype_risk": 0.0,
-                "social_abnormal_attention": 0.0,
-            }
+    @staticmethod
+    def _this_friday() -> date:
+        today = date.today()
+        days_to_friday = (4 - today.weekday()) % 7
+        return today + timedelta(days=days_to_friday)
 
+    @staticmethod
+    def _zero_features() -> dict[str, float]:
         return {
-            "social_mention_count": float(row.mention_count or 0),
-            "social_mention_momentum": float(row.mention_momentum or 0),
-            "social_sentiment_polarity": float(row.sentiment_polarity or 0),
-            "social_hype_risk": float(row.hype_risk or 0),
-            "social_abnormal_attention": float(row.abnormal_attention or 0),
+            "social_mention_count": 0.0,
+            "social_mention_momentum": 0.0,
+            "social_sentiment_polarity": 0.0,
+            "social_hype_risk": 0.0,
+            "social_abnormal_attention": 0.0,
         }
 
-    def run_all(self, tickers: list[str]) -> dict:
-        results = {}
-        for ticker in tickers:
+    def _get_vader(self):
+        if self._vader is None:
             try:
-                results[ticker] = self.ingest_social_for_ticker(ticker)
-            except Exception as e:
-                logger.error(f"Social sentiment failed {ticker}: {e}")
-                results[ticker] = 0
-        return results
+                from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+                self._vader = SentimentIntensityAnalyzer()
+            except ImportError:
+                logger.warning("vaderSentiment not installed; using fallback lexicon scorer")
+                self._vader = _FallbackSentimentIntensityAnalyzer()
+        return self._vader

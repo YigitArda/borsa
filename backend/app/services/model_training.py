@@ -60,9 +60,15 @@ NON_FEATURE_COLUMNS = {
     "week_ending",
     "label",
     "ticker",
-    "risk_target_1w",
-    "next_week_return",
     "sector",
+    # all possible target label names — guard against accidental inclusion
+    "target_2pct_1w",
+    "target_3pct_1w",
+    "risk_target_1w",
+    "risk_target_3pct_1w",
+    "next_week_return",
+    "next_2week_return",
+    "next_4week_return",
 }
 
 
@@ -611,6 +617,51 @@ class ModelTrainer:
                 logger.error(f"Sector model failed {sector}: {e}")
 
         return results
+
+    def predict_all(self, df: pd.DataFrame, min_train_weeks: int = 104) -> pd.DataFrame:
+        """Generate out-of-sample predictions via expanding-window walk-forward.
+
+        Trains on all weeks before each target week and predicts that week.
+        Returns a DataFrame with [week_ending, ticker, stock_id, prob] columns
+        suitable for passing directly to Backtester.
+        """
+        if df.empty:
+            return pd.DataFrame(columns=["week_ending", "ticker", "stock_id", "prob"])
+
+        df = df.sort_values("week_ending")
+        all_weeks = sorted(df["week_ending"].unique())
+
+        if len(all_weeks) < min_train_weeks + 1:
+            logger.warning("predict_all: not enough weeks (%d < %d)", len(all_weeks), min_train_weeks + 1)
+            return pd.DataFrame(columns=["week_ending", "ticker", "stock_id", "prob"])
+
+        feature_cols: list[str] | None = None
+        rows = []
+
+        for week in all_weeks[min_train_weeks:]:
+            train = df[df["week_ending"] < week].dropna(subset=["label"])
+            test = df[df["week_ending"] == week]
+            if len(train) < 100 or test.empty:
+                continue
+            if feature_cols is None:
+                feature_cols = [c for c in self.features if c in train.columns]
+                if not feature_cols:
+                    feature_cols = [c for c in train.columns if c not in NON_FEATURE_COLUMNS]
+            try:
+                model, scaler = self._train(train)
+                X = test[feature_cols].fillna(0).values
+                probs = model.predict_proba(scaler.transform(X))[:, 1]
+                for j, (_, row) in enumerate(test.iterrows()):
+                    rows.append({
+                        "week_ending": week,
+                        "ticker": row["ticker"],
+                        "stock_id": int(row["stock_id"]),
+                        "prob": float(probs[j]),
+                    })
+            except Exception as exc:
+                logger.warning("predict_all: week %s skipped: %s", week, exc)
+
+        return pd.DataFrame(rows)
 
     def train_final_model(self, tickers: list[str], train_end: date):
         """Train a single model on all data up to train_end for production use."""

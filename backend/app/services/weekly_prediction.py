@@ -23,7 +23,7 @@ from app.config import settings
 from app.models.strategy import Strategy
 from app.models.stock import Stock
 from app.models.prediction import WeeklyPrediction
-from app.services.model_training import ModelTrainer
+from app.services.model_training import ModelTrainer, NON_FEATURE_COLUMNS
 from app.services.calibration import CalibrationAnalyzer
 from app.services.kill_switch import KillSwitchMonitor
 from app.services.strategy_bandit import StrategyBandit
@@ -209,9 +209,7 @@ class WeeklyPredictionService:
 
         feature_cols = [c for c in strategy.config.get("features", []) if c in latest_rows.columns]
         if not feature_cols:
-            feature_cols = [c for c in latest_rows.columns if c not in [
-                "stock_id", "week_ending", "label", "ticker", "risk_target_1w", "next_week_return"
-            ]]
+            feature_cols = [c for c in latest_rows.columns if c not in NON_FEATURE_COLUMNS]
 
         if not feature_cols:
             logger.warning("No usable feature columns found; skipping predictions for strategy %s", strategy.id)

@@ -84,18 +84,24 @@ class BacktestResult:
 
     @property
     def sharpe(self) -> float:
-        returns = pd.Series([t.return_pct for t in self.trades])
-        if returns.std() == 0 or len(returns) < 2:
+        # Use portfolio-level weekly returns (from equity curve), not trade-level.
+        # Trade-level returns with sqrt(52) overcount observations when top_n > 1.
+        if self.equity_curve.empty or len(self.equity_curve) < 2:
             return 0.0
-        return float(returns.mean() / returns.std() * np.sqrt(52))
+        weekly_rets = self.equity_curve.pct_change().dropna()
+        if weekly_rets.std() == 0 or len(weekly_rets) < 2:
+            return 0.0
+        return float(weekly_rets.mean() / weekly_rets.std() * np.sqrt(52))
 
     @property
     def sortino(self) -> float:
-        returns = pd.Series([t.return_pct for t in self.trades])
-        downside = returns[returns < 0].std()
-        if downside == 0 or len(returns) < 2:
+        if self.equity_curve.empty or len(self.equity_curve) < 2:
             return 0.0
-        return float(returns.mean() / downside * np.sqrt(52))
+        weekly_rets = self.equity_curve.pct_change().dropna()
+        downside = weekly_rets[weekly_rets < 0].std()
+        if downside == 0 or len(weekly_rets) < 2:
+            return 0.0
+        return float(weekly_rets.mean() / downside * np.sqrt(52))
 
     @property
     def max_drawdown(self) -> float:
@@ -155,6 +161,7 @@ class Backtester:
     take_profit:    Profit target for early exit (e.g. 0.08).
     kelly_fraction: Per-position Kelly fraction (0.0 = equal weight fallback).
     regime_filter:  Optional RegimeFilter instance; None = no regime gating.
+    spike_detector: Optional IntradayEventDetector for spike-aware sizing.
     """
 
     def __init__(
@@ -168,6 +175,7 @@ class Backtester:
         take_profit: float | None = None,
         kelly_fraction: float = 0.0,
         regime_filter: "RegimeFilter | None" = None,
+        spike_detector=None,
     ):
         self.predictions = predictions_df
         self.prices = price_df
@@ -178,13 +186,21 @@ class Backtester:
         self.take_profit = take_profit
         self.kelly_fraction = kelly_fraction
         self.regime_filter = regime_filter
+        self.spike_detector = spike_detector
 
     def run(self, return_raw_trades: bool = False) -> BacktestResult:
         trades: list[Trade] = []
         equity = 1.0
-        equity_history = []
+        equity_history: list[tuple] = []
 
         weeks = sorted(self.predictions["week_ending"].unique())
+        week_to_idx = {w: i for i, w in enumerate(weeks)}
+
+        tc_bps = (settings.transaction_cost_bps + settings.slippage_bps) / 10000
+
+        # open_positions: list of dicts tracking held positions across weeks
+        # Each dict: {ticker, stock_id, prev_price, exit_price, exit_week_idx, size, trade}
+        open_positions: list[dict] = []
 
         for week_end in weeks:
             # --- Regime gate ---
@@ -192,53 +208,90 @@ class Backtester:
             if self.regime_filter is not None:
                 regime_mult = self.regime_filter.multiplier_for_week(week_end)
                 if regime_mult == 0.0:
-                    # bear regime: stay in cash this week
                     equity_history.append((week_end, equity))
                     continue
 
-            week_preds = self.predictions[self.predictions["week_ending"] == week_end]
-            candidates = week_preds[week_preds["prob"] >= self.threshold].nlargest(self.top_n, "prob")
+            week_idx = week_to_idx[week_end]
+            week_pnl = 0.0
 
-            week_trades = []
-            for _, row in candidates.iterrows():
-                ticker = row["ticker"]
-                entry_price = self._get_monday_open(ticker, week_end)
-                exit_price = self._get_friday_close(ticker, week_end, offset=self.holding_weeks)
+            # --- Close expired positions & MTM remaining ---
+            still_open: list[dict] = []
+            for pos in open_positions:
+                if pos["exit_week_idx"] == week_idx:
+                    # Final leg: prev_price → exit_price (TC already deducted at entry)
+                    prev_p = pos["prev_price"]
+                    exit_p = pos["exit_price"]
+                    if prev_p > 0 and exit_p > 0:
+                        week_pnl += (exit_p - prev_p) / prev_p * pos["size"]
+                    trades.append(pos["trade"])
+                else:
+                    # Mark-to-market: Friday close this week
+                    current_p = self._get_friday_close(pos["ticker"], week_end, offset=0)
+                    if current_p and current_p > 0:
+                        week_pnl += (current_p - pos["prev_price"]) / pos["prev_price"] * pos["size"]
+                        pos["prev_price"] = current_p
+                    still_open.append(pos)
+            open_positions = still_open
 
-                if entry_price is None or exit_price is None:
-                    continue
+            # --- New entries (only fill available slots) ---
+            n_active = len(open_positions)
+            available_slots = self.top_n - n_active
+            if available_slots > 0:
+                week_preds = self.predictions[self.predictions["week_ending"] == week_end]
+                candidates = week_preds[week_preds["prob"] >= self.threshold].nlargest(available_slots, "prob")
 
-                # Stop-loss / take-profit: check intra-period daily prices
-                exit_price, exit_reason = self._apply_sl_tp(
-                    ticker, entry_price, week_end, exit_price
-                )
-                if (
-                    entry_price <= 0
-                    or exit_price is None
-                    or not np.isfinite(entry_price)
-                    or not np.isfinite(exit_price)
-                    or exit_price <= 0
-                ):
-                    continue
+                new_entries: list[tuple] = []  # (Trade, ticker, entry_price, stock_id)
+                for _, row in candidates.iterrows():
+                    ticker = row["ticker"]
+                    entry_p = self._get_monday_open(ticker, week_end)
+                    raw_exit_p = self._get_friday_close(ticker, week_end, offset=self.holding_weeks)
 
-                t = Trade(
-                    ticker=ticker,
-                    stock_id=int(row["stock_id"]),
-                    entry_date=self._monday_after(week_end),
-                    exit_date=self._friday_after(week_end, offset=self.holding_weeks),
-                    entry_price=entry_price,
-                    exit_price=exit_price,
-                    signal_strength=float(row["prob"]),
-                )
-                week_trades.append(t)
+                    if not entry_p or not raw_exit_p or entry_p <= 0 or raw_exit_p <= 0:
+                        continue
+                    if not np.isfinite(entry_p) or not np.isfinite(raw_exit_p):
+                        continue
 
-            if week_trades:
-                position_size = self._position_size(len(week_trades), regime_mult)
-                week_return = sum(t.return_pct * position_size for t in week_trades)
-                equity *= (1 + week_return)
-                trades.extend(week_trades)
+                    exit_p, _ = self._apply_sl_tp(ticker, entry_p, week_end, raw_exit_p)
+                    if not exit_p or exit_p <= 0 or not np.isfinite(exit_p):
+                        continue
 
+                    t = Trade(
+                        ticker=ticker,
+                        stock_id=int(row["stock_id"]),
+                        entry_date=self._monday_after(week_end),
+                        exit_date=self._friday_after(week_end, offset=self.holding_weeks),
+                        entry_price=entry_p,
+                        exit_price=exit_p,
+                        signal_strength=float(row["prob"]),
+                    )
+                    new_entries.append((t, ticker, entry_p, int(row["stock_id"])))
+
+                if new_entries:
+                    n_new = len(new_entries)
+                    exit_week_idx = min(week_idx + self.holding_weeks, len(weeks) - 1)
+
+                    for t, ticker, entry_p, stock_id in new_entries:
+                        # Spike-aware position sizing: reduce size for high-spike-risk stocks
+                        spike_mult = self._spike_multiplier(stock_id, week_end)
+                        pos_size = self._position_size(n_new, regime_mult) * spike_mult
+
+                        week_pnl -= tc_bps * pos_size  # entry TC
+                        open_positions.append({
+                            "ticker": ticker,
+                            "stock_id": stock_id,
+                            "prev_price": entry_p,
+                            "exit_price": t.exit_price,
+                            "exit_week_idx": exit_week_idx,
+                            "size": pos_size,
+                            "trade": t,
+                        })
+
+            equity *= (1 + week_pnl)
             equity_history.append((week_end, equity))
+
+        # Flush positions that never reached their exit week (data ended)
+        for pos in open_positions:
+            trades.append(pos["trade"])
 
         equity_series = pd.Series(
             [e for _, e in equity_history],
@@ -253,21 +306,30 @@ class Backtester:
     # ------------------------------------------------------------------
 
     def _position_size(self, n_positions: int, regime_mult: float) -> float:
-        """
-        Compute per-trade position size fraction of total capital.
+        """Per-trade position size as fraction of total capital.
 
-        Kelly mode  (kelly_fraction > 0):
-            size = kelly_fraction * regime_mult
-            Total capital deployed = n * size (can be < 1 → partial cash holding)
-
-        Equal-weight mode (kelly_fraction == 0):
-            size = (1 / n_positions) * regime_mult
+        Kelly mode: capped at equal-weight (1/top_n) to prevent leverage > 1.
+        Equal-weight: 1/n_positions scaled by regime_mult.
         """
         if n_positions <= 0:
             return 0.0
+        equal_weight = 1.0 / max(n_positions, self.top_n)
         if self.kelly_fraction > 0:
-            return self.kelly_fraction * regime_mult
-        return (1.0 / n_positions) * regime_mult
+            # Kelly can't exceed equal-weight: prevents total deployment > 100%
+            return min(self.kelly_fraction * regime_mult, equal_weight)
+        return equal_weight * regime_mult
+
+    def _spike_multiplier(self, stock_id: int, week_end) -> float:
+        """Position size multiplier based on spike risk. 1.0 = no adjustment."""
+        if self.spike_detector is None:
+            return 1.0
+        try:
+            week_date = week_end.date() if hasattr(week_end, "date") else week_end
+            prob = self.spike_detector.spike_probability(stock_id, week_date)
+            # Linear scale: prob=0 → 1.0x, prob=0.5 → 0.7x, prob>=0.8 → 0.3x
+            return max(0.3, 1.0 - prob * 0.875)
+        except Exception:
+            return 1.0
 
     def _apply_sl_tp(self, ticker: str, entry_price: float, week_end: date, planned_exit: float | None) -> tuple[float | None, str]:
         """Check intra-period daily prices for stop-loss/take-profit triggers."""

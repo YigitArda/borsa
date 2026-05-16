@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     jwt_secret: str | None = None
     fred_api_key: str | None = None
 
+    # Reddit API (https://www.reddit.com/prefs/apps → "script" app)
+    reddit_client_id: str | None = None
+    reddit_client_secret: str | None = None
+    reddit_user_agent: str = "borsa-research-bot/1.0"
+
+    # X / Twitter API v2 Bearer Token
+    # Free tier: 7-day recent search only.
+    # Pro/Academic tier: full-archive search (tweets/search/all).
+    twitter_bearer_token: str | None = None
+
     # Notification settings
     smtp_host: str | None = None
     smtp_port: int = 587

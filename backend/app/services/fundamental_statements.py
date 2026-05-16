@@ -5,6 +5,10 @@ Stores as financial_metrics rows with metric_name prefixes:
   bs_  = balance sheet
   is_  = income statement
   cf_  = cash flow
+
+as_of_date is set to the actual SEC EDGAR filing date so backtest feature
+queries (as_of_date <= decision_date) never see data before it was public.
+Falls back to fiscal_period_end + 45 days when SEC lookup fails.
 """
 import logging
 from datetime import date
@@ -17,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.models.stock import Stock
 from app.models.financial import FinancialMetric
+from app.services.sec_edgar import get_filing_dates, get_as_of_date
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +59,13 @@ class FundamentalStatementsService:
             logger.error(f"Statements fetch failed {ticker}: {e}")
             return 0
 
+        # Fetch real SEC filing dates once per ticker (falls back to heuristic)
+        filing_dates = get_filing_dates(ticker)
+
         rows = []
-        rows += self._extract(stock.id, income, INCOME_ITEMS, prefix="is_")
-        rows += self._extract(stock.id, balance, BALANCE_ITEMS, prefix="bs_")
-        rows += self._extract(stock.id, cashflow, CASHFLOW_ITEMS, prefix="cf_")
+        rows += self._extract(stock.id, income, INCOME_ITEMS, prefix="is_", filing_dates=filing_dates)
+        rows += self._extract(stock.id, balance, BALANCE_ITEMS, prefix="bs_", filing_dates=filing_dates)
+        rows += self._extract(stock.id, cashflow, CASHFLOW_ITEMS, prefix="cf_", filing_dates=filing_dates)
 
         # Compute net income growth (YoY) from income statement
         if income is not None and not income.empty and "NetIncome" in income.index:
@@ -70,10 +78,11 @@ class FundamentalStatementsService:
                     if prev and prev != 0:
                         growth = (cur - prev) / abs(prev)
                         period_end = cols[i].date() if hasattr(cols[i], "date") else cols[i]
+                        as_of = get_as_of_date(ticker, period_end, filing_dates, is_annual=False)
                         rows.append({
                             "stock_id": stock.id,
                             "fiscal_period_end": period_end,
-                            "as_of_date": date.today(),
+                            "as_of_date": as_of,
                             "metric_name": "net_income_growth",
                             "value": float(growth),
                             "is_ttm": False,
@@ -92,7 +101,14 @@ class FundamentalStatementsService:
         logger.info(f"Statements: {ticker} — {len(rows)} rows")
         return len(rows)
 
-    def _extract(self, stock_id: int, df, items: list[str], prefix: str) -> list[dict]:
+    def _extract(
+        self,
+        stock_id: int,
+        df,
+        items: list[str],
+        prefix: str,
+        filing_dates: dict | None = None,
+    ) -> list[dict]:
         rows = []
         if df is None or df.empty:
             return rows
@@ -103,10 +119,17 @@ class FundamentalStatementsService:
             for period, val in series.items():
                 try:
                     period_date = period.date() if hasattr(period, "date") else period
+                    # Use actual SEC filing date; fall back to heuristic (+45 days)
+                    as_of = get_as_of_date(
+                        "",  # ticker not needed — filing_dates dict already resolved
+                        period_date,
+                        filing_dates=filing_dates,
+                        is_annual=False,
+                    )
                     rows.append({
                         "stock_id": stock_id,
                         "fiscal_period_end": period_date,
-                        "as_of_date": date.today(),
+                        "as_of_date": as_of,
                         "metric_name": f"{prefix}{item.lower()}",
                         "value": float(val),
                         "is_ttm": False,

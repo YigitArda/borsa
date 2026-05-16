@@ -161,7 +161,9 @@ class PaperTradingService:
             ]
             highs = [p["high"] for p in adjusted_prices if p["high"] is not None]
             lows = [p["low"] for p in adjusted_prices if p["low"] is not None]
-            realized_return = (exit_price - entry_price) / entry_price
+            from app.config import settings as _s
+            tc = (_s.transaction_cost_bps + _s.slippage_bps) / 10000
+            realized_return = (exit_price - entry_price) / entry_price - tc
 
             trade.entry_date = entry_row.date
             trade.exit_date = exit_row.date

@@ -541,7 +541,7 @@ def get_ablation_recommendations(strategy_id: int):
         rows = session.execute(
             select(AblationResult).where(AblationResult.strategy_id == strategy_id)
         ).scalars().all()
-        recs = tester.recommend_feature_groups(results)
+        recs = tester.recommend_feature_groups(rows)
         return {"strategy_id": strategy_id, "recommendations": recs}
 
 

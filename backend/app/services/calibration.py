@@ -169,8 +169,8 @@ class CalibrationAnalyzer:
                 PaperTrade.strategy_id == strategy_id,
                 PaperTrade.status == "closed",
                 PaperTrade.week_starting >= cutoff,
-                PaperTrade.prob_2pct is not None,
-                PaperTrade.hit_2pct is not None,
+                PaperTrade.prob_2pct.isnot(None),
+                PaperTrade.hit_2pct.isnot(None),
             )
             .order_by(PaperTrade.week_starting)
         ).scalars().all()
