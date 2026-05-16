@@ -427,11 +427,20 @@ class ResearchLoop:
         fold_metrics = [f.metrics for f in folds]
         passed, summary = self.gate.evaluate(fold_metrics, n_features=len(new_config.get("features", [])))
 
-        # Collect all trade returns from folds for advanced statistics
+        # Collect portfolio-level weekly returns from equity curves (not trade-level).
+        # Trade-level returns inflate T when top_n > 1, biasing PSR/DSR/permutation tests.
         all_returns = []
         all_trades = []
         for fold in folds:
-            all_returns.extend(fold.trade_returns or [])
+            ec = fold.equity_curve or []
+            if len(ec) >= 2:
+                equities = [e["equity"] for e in ec]
+                all_returns.extend(
+                    equities[i] / equities[i - 1] - 1
+                    for i in range(1, len(equities))
+                )
+            else:
+                all_returns.extend(fold.trade_returns or [])
             all_trades.extend(fold.trade_details or [])
 
         # Advanced statistical tests
@@ -447,10 +456,10 @@ class ResearchLoop:
 
         outperforms_spy = summary.get("avg_sharpe", 0.0) > spy_sharpe
 
-        # Benchmark alpha: avg_return - SPY weekly return scaled to same period
-        avg_return_per_trade = float(sum(r for r in all_returns) / len(all_returns)) if all_returns else 0.0
+        # Benchmark alpha: avg portfolio weekly return minus SPY weekly return
+        avg_weekly_return = float(sum(all_returns) / len(all_returns)) if all_returns else 0.0
         spy_weekly_return = spy_sharpe / (52 ** 0.5) if spy_sharpe else 0.0
-        benchmark_alpha = round(avg_return_per_trade - spy_weekly_return, 4)
+        benchmark_alpha = round(avg_weekly_return - spy_weekly_return, 4)
 
         # Tighten gate: also require permutation p-value < 0.1 and DSR > 0
         if passed and (perm_pvalue > 0.1 or dsr <= 0):

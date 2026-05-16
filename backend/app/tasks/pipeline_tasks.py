@@ -226,6 +226,46 @@ def ingest_social(self, tickers: list[str] | None = None):
         session.close()
 
 
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.backfill_social")
+def backfill_social(
+    self,
+    tickers: list[str] | None = None,
+    start: str = "2020-01-01",
+    end: str | None = None,
+    delay_sec: float = 1.0,
+):
+    """Backfill historical Reddit + Twitter social sentiment for a date range.
+
+    Reddit: uses Pushshift API (free, unlimited history).
+    Twitter: uses X API v2 full-archive search (requires Pro/Academic bearer token).
+
+    Run this once after adding new tickers or to seed historical PIT data.
+    """
+    from app.services.social_sentiment import SocialSentimentService
+
+    session = _get_sync_session()
+    try:
+        tickers = tickers or settings.mvp_tickers
+        start_date = date.fromisoformat(start)
+        end_date = date.fromisoformat(end) if end else date.today()
+        svc = SocialSentimentService(session)
+        results = svc.backfill(tickers, start_date, end_date, delay_sec=delay_sec)
+        total_reddit = sum(v["reddit"] for v in results.values())
+        total_stocktwits = sum(v["stocktwits"] for v in results.values())
+        total_twitter = sum(v["twitter"] for v in results.values())
+        return {
+            "status": "ok",
+            "tickers": len(tickers),
+            "date_range": f"{start} → {end_date}",
+            "total_reddit_weeks": total_reddit,
+            "total_stocktwits_weeks": total_stocktwits,
+            "total_twitter_weeks": total_twitter,
+            "results": results,
+        }
+    finally:
+        session.close()
+
+
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.generate_weekly_predictions")
 def generate_weekly_predictions(
     self,
@@ -741,8 +781,7 @@ def run_portfolio_simulation_auto(
             logger.warning("Portfolio simulation: tahmin üretilemedi")
             return {"status": "failed", "reason": "no_predictions"}
 
-        price_df = df[["week_ending", "ticker", "open", "close", "high", "low"]].copy()
-        price_df = price_df.rename(columns={"week_ending": "date"})
+        price_df = trainer._load_prices_for_tickers(tickers)
 
         threshold = config.get("threshold", 0.5)
         top_n = config.get("top_n", 5)
@@ -841,6 +880,37 @@ def snapshot_universe(self, index_name: str = "SP500", tickers: list[str] | None
         session.close()
 
 
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.detect_intraday_spikes")
+def detect_intraday_spikes(
+    self,
+    tickers: list[str] | None = None,
+    weeks_back: int = 52,
+):
+    """Detect intraday spike/crash events, attribute causes, and retrain spike predictor.
+
+    Should run AFTER ingest_prices and ingest_news so data is fresh.
+    Spike events are then used as features in the next compute_features run.
+    """
+    from app.services.intraday_event_detector import IntradayEventDetector
+
+    session = _get_sync_session()
+    try:
+        tickers = tickers or settings.mvp_tickers
+        detector = IntradayEventDetector(session)
+        count = detector.run_for_tickers(tickers, weeks_back=weeks_back)
+        trained = detector.train_spike_predictor()
+        return {
+            "status": "ok",
+            "events_recorded": count,
+            "predictor_trained": trained,
+        }
+    except Exception as exc:
+        logger.error("detect_intraday_spikes failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+    finally:
+        session.close()
+
+
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.run_full_pipeline")
 def run_full_pipeline(
     self,
@@ -870,6 +940,7 @@ def run_full_pipeline(
         ingest_statements.si(tickers=tickers),
         ingest_pead.si(tickers=tickers),
         ingest_short_interest.si(tickers=tickers),
+        detect_intraday_spikes.si(tickers=tickers, weeks_back=4),
         compute_features.si(tickers=tickers),
         compute_data_quality_scores.si(),
         update_pead_confirmations.si(tickers=tickers),
@@ -901,6 +972,7 @@ def run_full_pipeline(
             "ingest_statements",
             "ingest_pead",
             "ingest_short_interest",
+            "detect_intraday_spikes",
             "compute_features",
             "compute_data_quality_scores",
             "update_pead_confirmations",

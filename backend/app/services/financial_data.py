@@ -1,42 +1,41 @@
 """
 Financial data ingestion via yfinance.
 
-LIMITATION: yfinance fundamentals are NOT point-in-time — they return
-today's restated values. We store them with as_of_date=None to mark
-this approximation. For real PIT data, use Sharadar or similar.
-"""
-import logging
-import hashlib
-from datetime import date
+LIMITATION: yfinance fundamentals are NOT point-in-time - they return
+today's restated values. We store them with as_of_date=today to mark this
+approximation. For real PIT data, use Sharadar or similar.
 
-import yfinance as yf
+This module also contains the one-time repair helper that rewrites historical
+financial_metrics.as_of_date values using SEC EDGAR filing dates.
+"""
+import hashlib
+import logging
+from collections import defaultdict
+from datetime import date, timedelta
+
 import pandas as pd
+import yfinance as yf
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.models.stock import Stock
 from app.models.financial import FinancialMetric
+from app.models.stock import Stock
+from app.services.sec_edgar import get_as_of_date, get_filing_dates
 
 logger = logging.getLogger(__name__)
 
 FINANCIAL_METRICS = [
-    # Valuation
     "pe_ratio", "forward_pe", "price_to_sales", "price_to_book",
     "ev_to_ebitda", "ev_to_revenue",
-    # Profitability
     "gross_margin", "operating_margin", "net_margin",
     "roe", "roa", "roic",
-    # Growth (TTM)
     "revenue_growth", "earnings_growth", "eps_ttm",
     "net_income_growth",
-    # Balance sheet
     "debt_to_equity", "current_ratio", "quick_ratio",
     "free_cashflow", "operating_cashflow",
     "total_cash", "total_debt",
-    # Per share
     "book_value_per_share", "revenue_per_share",
-    # Market
     "market_cap", "beta", "52_week_high", "52_week_low",
     "shares_outstanding",
 ]
@@ -55,7 +54,7 @@ YFINANCE_MAP = {
     "roa": "returnOnAssets",
     "revenue_growth": "revenueGrowth",
     "earnings_growth": "earningsGrowth",
-    "net_income_growth": "earningsGrowth",  # best yfinance proxy for net income growth
+    "net_income_growth": "earningsGrowth",
     "eps_ttm": "trailingEps",
     "debt_to_equity": "debtToEquity",
     "current_ratio": "currentRatio",
@@ -115,8 +114,6 @@ class FinancialDataService:
                         exc,
                     )
 
-        # ERM: Earnings Revision Momentum
-        # Compare current forward EPS estimate vs prior quarter estimate
         try:
             erm_rows = self._compute_erm(t, stock.id, today)
             rows.extend(erm_rows)
@@ -137,14 +134,6 @@ class FinancialDataService:
         return len(rows)
 
     def _compute_erm(self, ticker_obj, stock_id: int, today: date) -> list[dict]:
-        """
-        Earnings Revision Momentum (ERM) from analyst EPS estimates.
-
-        erm_score = (current_consensus - prior_consensus) / |prior_consensus|
-        forward_pe_change = forward_pe_now - forward_pe_3m_ago (stored from prior ingestion)
-
-        Uses yfinance earnings_estimate if available.
-        """
         rows = []
         try:
             est = ticker_obj.earnings_estimate
@@ -167,9 +156,7 @@ class FinancialDataService:
         except Exception as e:
             logger.warning("ERM score computation failed [stock_id=%s]: %s", stock_id, e)
 
-        # forward_pe_change: compare current forward_pe to 3-month-ago stored value
         try:
-            from datetime import timedelta
             three_months_ago = today - timedelta(days=90)
             prev_fpe_row = self.session.execute(
                 select(FinancialMetric)
@@ -210,11 +197,7 @@ class FinancialDataService:
         return rows
 
     def ingest_pit_csv(self, path: str, data_source: str = "pit_csv") -> int:
-        """Import point-in-time financial metrics from a licensed/curated CSV.
-
-        CSV columns:
-          ticker,fiscal_period_end,as_of_date,metric_name,value[,is_ttm,data_source]
-        """
+        """Import point-in-time financial metrics from a licensed/curated CSV."""
         df = pd.read_csv(path)
         required = {"ticker", "fiscal_period_end", "as_of_date", "metric_name", "value"}
         missing = required - set(df.columns)
@@ -266,7 +249,6 @@ class FinancialDataService:
             .order_by(FinancialMetric.as_of_date.desc())
         ).scalars().all()
 
-        # Take the most recent value for each metric
         seen = {}
         for r in rows:
             if r.metric_name not in seen:
@@ -283,3 +265,46 @@ class FinancialDataService:
                 logger.error(f"Financial ingest failed {ticker}: {e}")
                 results[ticker] = 0
         return results
+
+
+def repair_financial_pit(session: Session, dry_run: bool = False) -> int:
+    """Rewrite historical financial metrics using SEC filing dates."""
+    stocks = session.execute(select(Stock)).scalars().all()
+    total_updated = 0
+
+    for stock in stocks:
+        ticker = stock.ticker
+        logger.info("Processing %s ...", ticker)
+        filing_dates = get_filing_dates(ticker)
+        if not filing_dates:
+            logger.warning("  %s: no SEC data, using heuristic for all rows", ticker)
+
+        rows = session.execute(
+            select(FinancialMetric).where(
+                FinancialMetric.stock_id == stock.id,
+                FinancialMetric.is_ttm == False,  # noqa: E712
+            )
+        ).scalars().all()
+        if not rows:
+            continue
+
+        period_groups: dict[date, list[FinancialMetric]] = defaultdict(list)
+        for row in rows:
+            period_groups[row.fiscal_period_end].append(row)
+
+        ticker_updated = 0
+        for period_end, period_rows in period_groups.items():
+            correct_as_of = get_as_of_date(ticker, period_end, filing_dates)
+            for row in period_rows:
+                if row.as_of_date != correct_as_of:
+                    if not dry_run:
+                        row.as_of_date = correct_as_of
+                    ticker_updated += 1
+
+        if not dry_run and ticker_updated > 0:
+            session.commit()
+
+        total_updated += ticker_updated
+        logger.info("  %s: %d rows %s", ticker, ticker_updated, "would update" if dry_run else "updated")
+
+    return total_updated

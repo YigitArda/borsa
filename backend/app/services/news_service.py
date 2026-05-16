@@ -163,19 +163,27 @@ class NewsService:
         sentiments = [a.sentiment_score or 0.0 for a, _ in analyses]
         n = len(analyses)
 
-        # Recency-weighted sentiment (more recent = higher weight)
+        # Recency-weighted sentiment: age relative to week_ending (NOT today).
+        # Using today would cause lookahead — a 2018 article would appear
+        # "very old" and get near-zero weight regardless of its actual recency
+        # within the decision week.
         from datetime import datetime as dt
-        now = dt.now(tz=timezone.utc)
+        reference = dt(
+            week_ending.year, week_ending.month, week_ending.day, tzinfo=timezone.utc
+        )
         weights = []
         for _, article in analyses:
             if article.published_at:
-                age_hours = max((now - article.published_at).total_seconds() / 3600, 1)
+                pub = article.published_at
+                if pub.tzinfo is None:
+                    pub = pub.replace(tzinfo=timezone.utc)
+                age_hours = max((reference - pub).total_seconds() / 3600, 1)
                 weights.append(1 / age_hours)
             else:
                 weights.append(0.01)
 
         total_w = sum(weights) or 1
-        recency_impact = sum(s * w for s, (a, _) in zip(sentiments, zip(analyses, analyses)) for w in [weights[0]]) / total_w
+        recency_impact = sum(s * w for s, w in zip(sentiments, weights)) / total_w
 
         return {
             "news_sentiment_score": float(np.mean(sentiments)),
@@ -187,7 +195,7 @@ class NewsService:
             "news_product_flag": float(any(a.is_product_launch for a, _ in analyses)),
             "news_analyst_flag": float(any(a.is_analyst_action for a, _ in analyses)),
             "news_mgmt_flag": float(any(a.is_management_change for a, _ in analyses)),
-            "news_recency_impact": float(np.mean(sentiments)),  # simplified recency weighting
+            "news_recency_impact": float(recency_impact),
         }
 
     def run_all(self, tickers: list[str]) -> dict:

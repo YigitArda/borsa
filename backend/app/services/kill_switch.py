@@ -105,11 +105,21 @@ class KillSwitchMonitor:
         if not returns:
             return []
 
-        # Compute running drawdown from equity curve
+        # Group by week_starting and compute portfolio-level weekly returns (equal weight).
+        # Chaining individual position returns would overstate drawdown when top_n > 1.
+        from collections import defaultdict
+        weekly_buckets: dict = defaultdict(list)
+        for t in trades:
+            weekly_buckets[t.week_starting].append(t.realized_return)
+        portfolio_returns = [
+            sum(rs) / len(rs)
+            for rs in (weekly_buckets[w] for w in sorted(weekly_buckets))
+        ]
+
         equity = 1.0
         peak = equity
         max_dd = 0.0
-        for r in returns:
+        for r in portfolio_returns:
             equity *= (1 + r)
             if equity > peak:
                 peak = equity
@@ -149,13 +159,13 @@ class KillSwitchMonitor:
         if not folds:
             return []
 
-        # Reconstruct equity curve from fold metrics
+        # max_drawdown stored as negative float (e.g. -0.15); take abs for comparison.
         max_dd = 0.0
         for fold in folds:
             metrics = fold.metrics or {}
             fold_dd = metrics.get("max_drawdown")
-            if fold_dd is not None and fold_dd > max_dd:
-                max_dd = fold_dd
+            if fold_dd is not None and abs(fold_dd) > max_dd:
+                max_dd = abs(fold_dd)
 
         if max_dd >= max_pct:
             event = self.trigger_kill_switch(

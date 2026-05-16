@@ -24,7 +24,6 @@ class Position:
     market_value: float = 0.0
     sector: str | None = None
 
-    @property
     def weight(self, total_value: float) -> float:
         return self.market_value / total_value if total_value else 0.0
 
@@ -161,6 +160,7 @@ class PortfolioSimulator:
         month_start_value = self.config.initial_capital
         prev_year: int | None = None
         year_start_value = self.config.initial_capital
+        running_peak = self.config.initial_capital
 
         for current_date in sorted(all_dates):
             portfolio.date = current_date
@@ -193,6 +193,7 @@ class PortfolioSimulator:
             portfolio = self._rebalance(portfolio, current_date)
 
             # 6. Record snapshot
+            running_peak = max(running_peak, portfolio.total_value)
             snap = self._record_snapshot(
                 portfolio,
                 current_date,
@@ -200,6 +201,7 @@ class PortfolioSimulator:
                 year_start_value,
                 prev_month,
                 prev_year,
+                running_peak,
             )
             snapshots.append(snap)
 
@@ -263,8 +265,6 @@ class PortfolioSimulator:
                 sector_vals[p.sector] = sector_vals.get(p.sector, 0.0) + p.market_value
 
         # Scale down sectors that exceed limit
-        trimmed = {k: Position(**{f.name: getattr(v, f.name) for f in Position.__dataclass_fields__.values()}) for k, v in positions.items()}
-        # Actually just mutate in place for simplicity
         for sector, val in sector_vals.items():
             exposure = val / total
             if exposure > limit:
@@ -545,6 +545,7 @@ class PortfolioSimulator:
         year_start_value: float,
         prev_month: int | None,
         prev_year: int | None,
+        running_peak: float = 0.0,
     ) -> dict:
         tv = portfolio.total_value
         monthly_return = None
@@ -555,8 +556,8 @@ class PortfolioSimulator:
         if prev_year is not None and year_start_value > 0:
             ytd_return = (tv - year_start_value) / year_start_value
 
-        # Peak-to-trough drawdown
-        peak = max(month_start_value, tv) if month_start_value > 0 else tv
+        # Peak-to-trough drawdown from all-time high
+        peak = running_peak if running_peak > 0 else tv
         drawdown = (tv - peak) / peak if peak > 0 else 0.0
 
         return {

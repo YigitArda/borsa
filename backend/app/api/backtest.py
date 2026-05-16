@@ -274,9 +274,8 @@ async def run_portfolio_simulation(
         if predictions.empty:
             return {"status": "failed", "reason": "no predictions produced"}
 
-        # Build price_df from dataset
-        price_df = df[["week_ending", "ticker", "open", "close", "high", "low"]].copy()
-        price_df = price_df.rename(columns={"week_ending": "date"})
+        # Price data for backtester must come from the price table, not the feature dataset
+        price_df = trainer._load_prices_for_tickers(tickers)
 
         backtester = Backtester(
             predictions,

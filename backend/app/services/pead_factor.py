@@ -288,24 +288,11 @@ class PEADFactor:
         out["revision_momentum"] = revision_momentum if pd.notna(revision_momentum) else np.nan
         out["revision_score"] = revision_score if pd.notna(revision_score) else np.nan
 
-        # Days to next earnings (look ahead in DB for future signals)
-        # We use yfinance-stored future entries if they exist
-        future_signals = self.session.execute(
-            select(PEADSignal)
-            .where(
-                PEADSignal.stock_id == stock_id,
-                PEADSignal.earnings_date >= week_end_date,
-            )
-            .order_by(PEADSignal.earnings_date.asc())
-            .limit(1)
-        ).scalar_one_or_none()
-
-        if future_signals:
-            out["days_to_next_earnings"] = float(
-                (future_signals.earnings_date - week_end_date).days
-            )
-        else:
-            out["days_to_next_earnings"] = np.nan
+        # days_to_next_earnings intentionally set to NaN.
+        # Querying future DB rows (earnings_date >= week_end_date) is direct lookahead:
+        # the exact earnings date is not always publicly known weeks in advance,
+        # and yfinance stores confirmed dates — indistinguishable from pre-announced ones.
+        out["days_to_next_earnings"] = np.nan
 
         return out
 
