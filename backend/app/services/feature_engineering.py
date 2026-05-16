@@ -5,9 +5,12 @@ All features are computed from data available BEFORE the week_ending date
 to prevent lookahead bias. Features are stored in long format.
 """
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import timedelta
+
 import numpy as np
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -134,11 +137,20 @@ class FeatureEngineeringService:
             return {}
         return self._macro_cache[max(candidates)]
 
-    def compute_features_for_stock(self, ticker: str) -> int:
+    def compute_features_for_stock(self, ticker: str, incremental: bool = True) -> int:
+        """Compute and upsert features for one stock.
+
+        When incremental=True (default), only new weeks beyond the last stored feature
+        week are written. The full price history is still loaded so rolling indicators
+        (52-week momentum, ATR, etc.) are computed correctly for the new weeks.
+        """
         stock = self._get_stock(ticker)
         if stock is None:
             logger.warning(f"Stock not found: {ticker}")
             return 0
+
+        # Incremental: find last week that already has features
+        since = self._last_feature_week(stock.id) if incremental else None
 
         daily_df = self._load_daily(stock.id)
         weekly_df = self._load_weekly(stock.id)
@@ -276,9 +288,10 @@ class FeatureEngineeringService:
                     "value": float(lval) if pd.notna(lval) else None,
                 })
 
-        self._upsert_features(feature_rows)
-        self._upsert_labels(label_rows)
-        return len(feature_rows)
+        self._upsert_features(feature_rows, since=since)
+        self._upsert_labels(label_rows, since=since)
+        new_rows = len([r for r in feature_rows if since is None or r["week_ending"] > since])
+        return new_rows
 
     # ------------------------------------------------------------------
     # Technical feature computation
@@ -452,7 +465,16 @@ class FeatureEngineeringService:
     def _get_stock(self, ticker: str) -> Stock | None:
         return self.session.execute(select(Stock).where(Stock.ticker == ticker)).scalar_one_or_none()
 
-    def _upsert_features(self, rows: list[dict]):
+    def _last_feature_week(self, stock_id: int):
+        """Return the most recent week_ending that has features stored for this stock."""
+        return self.session.execute(
+            select(func.max(FeatureWeekly.week_ending)).where(FeatureWeekly.stock_id == stock_id)
+        ).scalar_one_or_none()
+
+    def _upsert_features(self, rows: list[dict], since=None):
+        """Upsert feature rows, optionally skipping rows on or before `since` (a date)."""
+        if since is not None:
+            rows = [r for r in rows if r["week_ending"] > since]
         if not rows:
             return
         stmt = pg_insert(FeatureWeekly).values(rows)
@@ -463,7 +485,10 @@ class FeatureEngineeringService:
         self.session.execute(stmt)
         self.session.commit()
 
-    def _upsert_labels(self, rows: list[dict]):
+    def _upsert_labels(self, rows: list[dict], since=None):
+        """Upsert label rows, optionally skipping rows on or before `since` (a date)."""
+        if since is not None:
+            rows = [r for r in rows if r["week_ending"] > since]
         if not rows:
             return
         stmt = pg_insert(LabelWeekly).values(rows)
@@ -536,36 +561,59 @@ class FeatureEngineeringService:
             logger.info(f"Valuation percentiles: {len(pct_rows)} rows")
         return len(pct_rows)
 
-    def run_all(self, tickers: list[str]) -> dict:
-        results = {}
-        for ticker in tickers:
-            logger.info(f"Computing features: {ticker}")
+    def run_all(self, tickers: list[str], max_workers: int = 6) -> dict:
+        """Compute per-stock features in parallel, then run cross-sectional batch passes."""
+        results = self._run_per_stock_parallel(tickers, max_workers=max_workers)
+
+        # Cross-sectional passes must be sequential (use all stocks' data together)
+        for name, fn in [
+            ("valuation_percentiles", lambda: self.compute_valuation_percentiles_all(tickers)),
+            ("herding_scores", lambda: self._compute_herding_all(tickers)),
+            ("momentum_lowvol_cross", lambda: MomentumLowVolBatchService(self.session).compute_cross_sectional_all(tickers)),
+            ("short_interest_cross", lambda: ShortInterestService(self.session).compute_cross_sectional_all(tickers)),
+        ]:
             try:
-                n = self.compute_features_for_stock(ticker)
-                results[ticker] = n
+                fn()
             except Exception as e:
-                logger.error(f"Feature error {ticker}: {e}")
-                results[ticker] = 0
-        # Cross-sectional valuation percentiles (batch, after per-stock features)
-        try:
-            self.compute_valuation_percentiles_all(tickers)
-        except Exception as e:
-            logger.error(f"Valuation percentile error: {e}")
-        # Cross-sectional herding scores (batch, after per-stock features)
-        try:
-            self._compute_herding_all(tickers)
-        except Exception as e:
-            logger.error(f"Herding score error: {e}")
-        # Cross-sectional momentum+lowvol normalization (1A Z-scores + 1D ranks)
-        try:
-            MomentumLowVolBatchService(self.session).compute_cross_sectional_all(tickers)
-        except Exception as e:
-            logger.error(f"MomentumLowVol cross-sectional error: {e}")
-        # Cross-sectional short interest sector z-scores (3D)
-        try:
-            ShortInterestService(self.session).compute_cross_sectional_all(tickers)
-        except Exception as e:
-            logger.error(f"ShortInterest cross-sectional error: {e}")
+                logger.error("Cross-sectional %s error: %s", name, e)
+
+        return results
+
+    @staticmethod
+    def _run_per_stock_parallel(tickers: list[str], max_workers: int = 6, db_url: str | None = None) -> dict:
+        """Compute features for each ticker in a thread pool, each with its own DB session.
+
+        Per-stock feature computation is CPU + IO bound and independent between tickers,
+        so parallelism is safe. Each thread creates and closes its own session.
+        """
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.config import settings as _settings
+
+        url = db_url or _settings.sync_database_url
+
+        def _compute_one(ticker: str) -> tuple[str, int]:
+            engine = create_engine(url, pool_pre_ping=True)
+            Session = sessionmaker(bind=engine)
+            session = Session()
+            try:
+                svc = FeatureEngineeringService(session)
+                n = svc.compute_features_for_stock(ticker, incremental=True)
+                logger.info("Features computed %s: %d new rows", ticker, n)
+                return ticker, n
+            except Exception as exc:
+                logger.error("Feature error %s: %s", ticker, exc)
+                return ticker, 0
+            finally:
+                session.close()
+                engine.dispose()
+
+        results: dict[str, int] = {}
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(tickers))) as executor:
+            futures = {executor.submit(_compute_one, t): t for t in tickers}
+            for future in as_completed(futures):
+                ticker_name, count = future.result()
+                results[ticker_name] = count
         return results
 
     def _compute_herding_all(self, tickers: list[str]) -> int:

@@ -1,4 +1,3 @@
-import "./globals.css";
 import Link from "next/link";
 import type { Metadata } from "next";
 import Tooltip from "@/components/Tooltip";
@@ -9,50 +8,61 @@ export const metadata: Metadata = {
 };
 
 const navLinks = [
-  { href: "/", label: "Ana Sayfa", tip: "Sistem ozeti, takip edilen hisseler ve paper trading durumu" },
-  { href: "/weekly-picks", label: "Haftalik Sinyaller", tip: "Modelin bu hafta urettigi alim/satim sinyalleri" },
-  { href: "/strategy-lab", label: "Strateji Lab", tip: "Backtest calistir, feature sec, arastirma dongusu baslat" },
-  { href: "/model-comparison", label: "Model Karsilastirma", tip: "Farkli modellerin performanslarini karsilastir" },
-  { href: "/feature-importance", label: "Feature Onemi", tip: "Hangi feature'lar model tahmininde en etkili" },
-  { href: "/risk-warnings", label: "Risk Uyarilari", tip: "Sistem riskleri, kill switch durumu ve uyarilar" },
-  { href: "/data-quality", label: "Veri Kalitesi", tip: "Veri eksiklikleri, tutarsizliklar ve kalite skorları" },
-  { href: "/data-status", label: "Veri Durumu", tip: "Tum veri kaynaklari, kapsamlari ve sistem durumu" },
-  { href: "/backtest", label: "Backtest", tip: "Gecmise donuk strateji testleri ve sonuclari" },
-  { href: "/portfolio-simulation", label: "Portfoy Sim", tip: "Strateji bazli sermaye simulasyonu" },
-  { href: "/arxiv", label: "ArXiv", tip: "Akademik paper taramasi ve insight kuyrugu" },
-  { href: "/ablation", label: "Ablasyon", tip: "Feature group testleri ve oneriler" },
+  { href: "/", label: "Ana Sayfa", tip: "Genel bakis: sinyaller, hisseler ve sistem durumu" },
+  { href: "/weekly-picks", label: "Bu Haftanin Sinyalleri", tip: "Modelin bu hafta onerilen hisseleri ve tahminleri" },
+  { href: "/stocks", label: "Hisseler", tip: "Takip edilen tum hisselerin listesi ve detaylari" },
+  { href: "/strategy-lab", label: "Strateji Laboratuvari", tip: "Yeni strateji dene, gecmis test et, model egit" },
+  { href: "/backtest", label: "Gecmis Test Sonuclari", tip: "Yapilan tum backtest ve strateji gecmis performanslari" },
+  { href: "/portfolio-simulation", label: "Portfoy Simulasyonu", tip: "Sermaye dagitimi ve portfoy performans simulasyonu" },
+  { href: "/risk-warnings", label: "Risk Uyarilari", tip: "Sistem riskleri, durdurma kosullari ve uyarilar" },
+  { href: "/data-quality", label: "Veri Kalitesi", tip: "Veri eksiklikleri ve guvenirligi" },
+  { href: "/model-comparison", label: "Model Karsilastirma", tip: "Farkli modellerin performans karsilastirmasi" },
+  { href: "/feature-importance", label: "Hangi Faktorler Etkili?", tip: "Modelin en cok hangi verilere baktigini goster" },
+  { href: "/trinity-screener", label: "Hisse Taramasi", tip: "Deger+Kalite+Momentum kriterleriyle hisse tara" },
+  { href: "/research/regime", label: "Piyasa Ortami Analizi", tip: "Dusuk/orta/yuksek volatilite donemlerinde strateji performansi" },
+  { href: "/research/calibration", label: "Tahmin Guvenilirligi", tip: "Model tahminlerinin gerceklesmeyle ne kadar uyustugu" },
+  { href: "/ablation", label: "Faktor Etki Analizi", tip: "Hangi faktor olmadan model daha iyi/kotu calisiyor" },
+  { href: "/arxiv", label: "Akademik Arastirmalar", tip: "Guncel finans arastirma makaleleri ve icgoru kuyrugu" },
+  { href: "/hypotheses", label: "Arastirma Hipotezleri", tip: "Test edilecek ve izlenecek yatirim hipotezleri" },
 ];
 
 const sidebarSections = [
   {
-    title: "Ana Menu",
+    title: "Baslangiç",
     links: [
-      { href: "/", label: "Ana Sayfa", tip: "Sistem ozeti ve paper trading durumu" },
-      { href: "/weekly-picks", label: "Haftalik Sinyaller", tip: "Bu haftanin model sinyalleri" },
-      { href: "/strategy-lab", label: "Strateji Lab", tip: "Backtest ve arastirma dongusu" },
-      { href: "/model-comparison", label: "Model Karsilastirma", tip: "Model performans karsilastirmasi" },
+      { href: "/", label: "Genel Bakis", tip: "Sistemin durumu ve ozeti" },
+      { href: "/weekly-picks", label: "Bu Haftanin Sinyalleri", tip: "Model bu hafta hangi hisseleri oneriyor?" },
+      { href: "/stocks", label: "Hisseler Listesi", tip: "Takip edilen tum hisseler" },
+      { href: "/risk-warnings", label: "Risk & Uyarilar", tip: "Sistem riskleri ve durdurma kosullari" },
     ],
   },
   {
-    title: "Arastirma",
+    title: "Strateji & Test",
     links: [
-      { href: "/feature-importance", label: "Feature Onemi", tip: "Feature etki analizi" },
-      { href: "/risk-warnings", label: "Risk Uyarilari", tip: "Risk durumu ve uyarilar" },
-      { href: "/data-quality", label: "Veri Kalitesi", tip: "Veri kalite skorları" },
-      { href: "/data-status", label: "Veri Durumu", tip: "Veri kaynaklari ve kapsam" },
-      { href: "/backtest", label: "Backtest", tip: "Gecmis strateji testleri" },
-      { href: "/portfolio-simulation", label: "Portfoy Sim", tip: "Sermaye simulasyonu" },
-      { href: "/arxiv", label: "ArXiv", tip: "Paper tarama ve insight kuyruğu" },
-      { href: "/ablation", label: "Ablasyon", tip: "Feature group analizi" },
+      { href: "/strategy-lab", label: "Strateji Laboratuvari", tip: "Yeni strateji dene, gecmis test et" },
+      { href: "/backtest", label: "Gecmis Test Sonuclari", tip: "Tum backtest gecmisi" },
+      { href: "/portfolio-simulation", label: "Portfoy Simulasyonu", tip: "Sermaye dagitim simulasyonu" },
+      { href: "/model-comparison", label: "Model Karsilastirma", tip: "Modelleri yan yana karsilastir" },
     ],
   },
   {
-    title: "Sistem",
+    title: "Analiz",
     links: [
-      { href: "/admin", label: "Admin Panel", tip: "Yonetim paneli" },
-      { href: "/admin/jobs", label: "Isler", tip: "Celery is durumlari" },
-      { href: "/admin/notifications", label: "Bildirimler", tip: "Sistem bildirimleri" },
-      { href: "/stocks", label: "Hisseler", tip: "Tum hisseler listesi" },
+      { href: "/feature-importance", label: "Hangi Faktorler Etkili?", tip: "Model hangi verilere bakiyor?" },
+      { href: "/trinity-screener", label: "Hisse Taramasi", tip: "Deger+Kalite+Momentum tarama" },
+      { href: "/research/regime", label: "Piyasa Ortami", tip: "Volatilite donemlerine gore performans" },
+      { href: "/research/calibration", label: "Tahmin Guvenilirligi", tip: "Tahminler gerceklesmeyle uyusuyor mu?" },
+      { href: "/ablation", label: "Faktor Etki Analizi", tip: "Hangi faktor modeli ne kadar etkiliyor?" },
+    ],
+  },
+  {
+    title: "Veri & Sistem",
+    links: [
+      { href: "/data-quality", label: "Veri Kalitesi", tip: "Veri eksiklikleri ve tutarsizliklar" },
+      { href: "/data-status", label: "Veri Kaynaklari", tip: "Tum veri kaynaklari ve kapsam" },
+      { href: "/arxiv", label: "Arastirma Makaleleri", tip: "Guncel finans arastirmalari" },
+      { href: "/hypotheses", label: "Arastirma Hipotezleri", tip: "Test edilecek hipotezler" },
+      { href: "/admin", label: "Sistem Yonetimi", tip: "Admin paneli ve job takibi" },
     ],
   },
 ];
@@ -62,6 +72,9 @@ const TICKER_SYMBOLS = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="tr">
+      <head>
+        <link rel="stylesheet" href="/retro.css" />
+      </head>
       <body style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
         <div className="ticker-bar">
           {TICKER_SYMBOLS.map((symbol) => `${symbol} --% `).join(" | ")}
@@ -168,6 +181,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             ))}
 
+            <div className="guide-box">
+              <b>Nasil Kullanilir?</b>
+              <br />
+              1. <a href="/weekly-picks">Sinyallere</a> bak
+              <br />
+              2. <a href="/stocks">Hisse</a> arastir
+              <br />
+              3. <a href="/strategy-lab">Strateji</a> test et
+              <br />
+              4. <a href="/risk-warnings">Riskleri</a> takip et
+            </div>
             <div
               style={{
                 margin: "6px",
@@ -178,11 +202,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 fontFamily: "Tahoma,sans-serif",
               }}
             >
-              <b>Sistem Durumu</b>
+              <b>Sistem</b>
               <br />
               Pipeline: <span className="text-green">HAZIR</span>
               <br />
-              Kill Switch: <span className="text-green">KAPALI</span>
+              Her Cumartesi guncellenir
             </div>
           </div>
 

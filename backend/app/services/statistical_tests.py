@@ -62,10 +62,11 @@ def deflated_sharpe_ratio(
     skew = float(pd.Series(r).skew())
     kurt = float(pd.Series(r).kurtosis())
 
-    adj = 1 - skew * (sr / math.sqrt(52)) / 6 + (kurt + 1) / 4 * (sr / math.sqrt(52)) ** 2
+    sr_period = sr / math.sqrt(52)
+    adj = 1 - skew * sr_period + (kurt + 1) / 4 * sr_period ** 2
     if adj <= 0:
-        return sr
-    dsr = (sr - sr_star) / math.sqrt(adj)
+        return float(sr - sr_star)
+    dsr = (sr - sr_star) * math.sqrt(T - 1) / math.sqrt(adj)
     return float(dsr)
 
 

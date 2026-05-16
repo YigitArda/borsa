@@ -189,5 +189,18 @@ export const verification = {
   full: () => get<any>("/verification"),
 };
 
+// Scientific / hypothesis registry
+export const scientific = {
+  hypotheses: (status?: string) =>
+    get<any[]>(status ? `/scientific/hypotheses?status=${status}` : "/scientific/hypotheses"),
+  registerHypothesis: (payload: any) => post<any>("/scientific/hypotheses", payload),
+  updateStatus: (id: string, status: string, results?: any) =>
+    post<any>(`/scientific/hypotheses/${id}/status`, { status, results: results ?? null }),
+  trinityScreen: (payload: any) => post<any[]>("/scientific/trinity/screen", payload),
+  allocate: (payload: any) => post<any>("/scientific/portfolio/allocate", payload),
+  metaSelect: (payload: any) => post<any>("/scientific/meta/select", payload),
+  decayCheck: (payload: any) => post<any>("/scientific/decay/check", payload),
+};
+
 // Legacy generic API
 export const api = { get, post, put };

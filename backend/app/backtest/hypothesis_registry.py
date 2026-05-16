@@ -60,7 +60,13 @@ class HypothesisRegistry:
         "REJECTED": set(),
     }
 
-    def __init__(self, db_path: str = "./data/hypothesis_registry.db"):
+    def __init__(self, db_path: str | None = None):
+        if db_path is None:
+            import os
+            db_path = os.environ.get(
+                "HYPOTHESIS_REGISTRY_PATH",
+                str(Path(__file__).resolve().parent.parent.parent / "data" / "hypothesis_registry.db"),
+            )
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()

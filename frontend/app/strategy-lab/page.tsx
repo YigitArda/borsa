@@ -8,7 +8,21 @@ import { getTooltip } from "@/lib/tooltips";
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const MODEL_TYPES = ["lightgbm", "logistic_regression", "random_forest", "gradient_boosting", "catboost", "xgboost", "neural_network"];
+const MODEL_LABELS: Record<string, string> = {
+  lightgbm: "LightGBM (onerilen)",
+  logistic_regression: "Lojistik Regresyon (basit)",
+  random_forest: "Rastgele Orman",
+  gradient_boosting: "Gradient Boosting",
+  catboost: "CatBoost",
+  xgboost: "XGBoost",
+  neural_network: "Yapay Sinir Agi",
+};
 const TARGETS = ["target_2pct_1w", "target_3pct_1w", "risk_target_1w"];
+const TARGET_LABELS: Record<string, string> = {
+  target_2pct_1w: "1 haftada %2+ kazanim",
+  target_3pct_1w: "1 haftada %3+ kazanim",
+  risk_target_1w: "1 haftada dusuk kayip",
+};
 const TOP_N_OPTIONS = [3, 5, 7, 10];
 const HOLDING_OPTIONS = [
   { label: "1 hafta", value: 1 },
@@ -210,18 +224,27 @@ export default function StrategyLab() {
 
   return (
     <div>
-      <h1>🔬 Strateji Lab</h1>
+      <h1>Strateji Laboratuvari</h1>
 
-      <div className="alert alert-info">
-        ℹ Backtest çalıştır, araştırma döngüsü başlat. Sadece araştırma amaçlıdır.
+      <div className="info-box" style={{ marginBottom: "12px" }}>
+        <b>Bu sayfa ne yapar?</b> — Makine ogrenmesi modeli egitip test edebilirsin.
+        Adimlar sirasiyla: <b>(1)</b> Hangi hisselere bakacagini sec,
+        <b> (2)</b> Veriyi guncelle (pipeline),
+        <b> (3)</b> Hangi gostergeler kullanilacak sec (feature),
+        <b> (4)</b> Modeli gecmis veriyle test et (backtest),
+        <b> (5)</b> Otomatik arastirma dongusunu calistir.
+        Sonuclar <b>kabul kapisini</b> gecerse strateji aktif hale gelir.
+        Hicbir sey gercek para ile yapilmamaktadir.
       </div>
 
       {/* 1. Hisse Evreni */}
       <div style={sectionStyle}>
-        <div style={sectionHeadStyle}>1. Hisse Evreni</div>
+        <div style={sectionHeadStyle}>1. Hisse Evreni — Hangi Hisselere Bakacaksin?</div>
         <div style={sectionBodyStyle}>
-          <p style={{ marginBottom: "6px", fontSize: "11px", color: "#666" }}>
-            {selectedTickers.length} hisse seçildi
+          <p style={{ marginBottom: "6px", fontSize: "11px", color: "#555" }}>
+            Modelin analiz edecegi hisseleri sec. Secili hisseler mavi gozukur.
+            Baslamak icin ilk 10 hisse yeterlidir. &nbsp;
+            <b>{selectedTickers.length} hisse secildi.</b>
           </p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
             {SP500_TICKERS.map(t => (
@@ -247,8 +270,12 @@ export default function StrategyLab() {
 
       {/* 2. Pipeline */}
       <div style={sectionStyle}>
-        <div style={sectionHeadStyle}>2. Veri Pipeline</div>
+        <div style={sectionHeadStyle}>2. Veri Guncelleme — Pipeline</div>
         <div style={sectionBodyStyle}>
+          <p style={{ marginBottom: "6px", fontSize: "11px", color: "#555" }}>
+            Modeli egitmeden once hisselerin fiyat ve gostergelerinin guncellenmesi gerekir.
+            Ilk kez kullaniyorsan <b>Tumumunu Calistir</b> dugmesine bas ve bitmesini bekle (birkaç dakika surebilir).
+          </p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
             {[
               { label: "Evren Snapshot", endpoint: "snapshot-universe", body: { tickers: selectedTickers } },
@@ -259,7 +286,7 @@ export default function StrategyLab() {
               { label: "Finansallar", endpoint: "financials", body: { tickers: selectedTickers } },
               { label: "Bilanço/Gelir/NA", endpoint: "statements", body: { tickers: selectedTickers } },
               { label: "Sosyal Duygu", endpoint: "social", body: { tickers: selectedTickers } },
-              { label: "🔄 Tümünü Çalıştır", endpoint: "run-all", body: { tickers: selectedTickers } },
+              { label: "Tumumunu Calistir (onerilen)", endpoint: "run-all", body: { tickers: selectedTickers } },
             ].map(({ label, endpoint, body }) => (
               <Tooltip key={endpoint} text={getTooltip(label) || label} position="top">
                 <button onClick={() => triggerPipeline(endpoint, label, body)}>
@@ -279,12 +306,16 @@ export default function StrategyLab() {
       {/* 3. Feature Seçimi */}
       <div style={sectionStyle}>
         <div style={sectionHeadStyle}>
-          3. Feature Seti &nbsp;
-          <span style={{ fontWeight: "normal" }}>
-            ({selectedFeatures.length} / {ALL_FEATURE_OPTIONS.length} seçildi)
+          3. Gostergeler (Feature) — Model Hangi Verilere Baksin?
+          <span style={{ fontWeight: "normal", marginLeft: "8px" }}>
+            ({selectedFeatures.length} / {ALL_FEATURE_OPTIONS.length} secildi)
           </span>
         </div>
         <div style={sectionBodyStyle}>
+          <p style={{ marginBottom: "6px", fontSize: "11px", color: "#555" }}>
+            Model bu gostergelerden ogrenir. Secili olanlar yesil gozukur.
+            Yeni baslayanlar icin varsayilan secim iyi bir baslangic noktasidir.
+          </p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "3px" }}>
             {ALL_FEATURE_OPTIONS.map(f => (
               <Tooltip key={f} text={getTooltip(f) || f} position="top">
@@ -307,8 +338,12 @@ export default function StrategyLab() {
 
       {/* 4. Direkt Backtest */}
       <div style={sectionStyle}>
-        <div style={sectionHeadStyle}>4. Direkt Backtest (Walk-Forward)</div>
+        <div style={sectionHeadStyle}>4. Gecmis Veri Testi (Walk-Forward Backtest)</div>
         <div style={sectionBodyStyle}>
+          <p style={{ marginBottom: "8px", fontSize: "11px", color: "#555" }}>
+            Model secili gostergelerle gecmis veri uzerinde egitilir, daha onceki donemde test edilir.
+            Sonucta Sharpe orani, basari orani ve max kayip rapor edilir.
+          </p>
           <table style={{ borderCollapse: "collapse", marginBottom: "8px" }}>
             <tbody>
               <tr>
@@ -316,7 +351,7 @@ export default function StrategyLab() {
                 <td style={{ padding: "3px 8px 3px 0" }}>
                   <Tooltip text={getTooltip(modelType) || "Makine öğrenmesi modeli"} position="top">
                     <select value={modelType} onChange={e => setModelType(e.target.value)}>
-                      {MODEL_TYPES.map(m => <option key={m} value={m}>{m}</option>)}
+                      {MODEL_TYPES.map(m => <option key={m} value={m}>{MODEL_LABELS[m] ?? m}</option>)}
                     </select>
                   </Tooltip>
                 </td>
@@ -324,7 +359,7 @@ export default function StrategyLab() {
                 <td style={{ padding: "3px 8px 3px 0" }}>
                   <Tooltip text={getTooltip(target) || "Tahmin hedefi"} position="top">
                     <select value={target} onChange={e => setTarget(e.target.value)}>
-                      {TARGETS.map(t => <option key={t} value={t}>{t}</option>)}
+                      {TARGETS.map(t => <option key={t} value={t}>{TARGET_LABELS[t] ?? t}</option>)}
                     </select>
                   </Tooltip>
                 </td>
@@ -363,7 +398,7 @@ export default function StrategyLab() {
             onClick={runDirectBacktest}
             disabled={directRunning || selectedTickers.length === 0 || selectedFeatures.length === 0}
           >
-            {directRunning ? "⏳ Çalışıyor..." : "▶ Direkt Backtest Çalıştır"}
+            {directRunning ? "Calistirilıyor... (bekleyin)" : "Gecmis Veri Testini Baslat"}
           </button>
 
           {directResult && (
@@ -421,10 +456,12 @@ export default function StrategyLab() {
 
       {/* 5. Araştırma Döngüsü */}
       <div style={sectionStyle}>
-        <div style={sectionHeadStyle}>5. Otomatik Araştırma Döngüsü</div>
+        <div style={sectionHeadStyle}>5. Otomatik Arastirma Dongusu</div>
         <div style={sectionBodyStyle}>
-          <p style={{ fontSize: "11px", color: "#666", marginBottom: "8px" }}>
-            Mutasyon önerileri walk-forward + kabul kapısından otomatik geçer. Celery arka planda çalışır.
+          <p style={{ fontSize: "11px", color: "#555", marginBottom: "8px" }}>
+            Sistem farkli parametre kombinasyonlarini otomatik dener ve her birini kabul kapisindan gecirir.
+            Gecenleri "strateji" olarak kaydeder. Arka planda calisir, sayfayi kapatsan da devam eder.
+            <b> %80-95 red orani normaldir</b> — bu istenen davranistir, hata degil.
           </p>
           <table style={{ borderCollapse: "collapse", marginBottom: "8px" }}>
             <tbody>
@@ -440,7 +477,7 @@ export default function StrategyLab() {
           </table>
           <div style={{ display: "flex", gap: "6px" }}>
             <button onClick={startResearch} disabled={running || selectedTickers.length === 0 || selectedFeatures.length === 0}>
-              {running ? "⏳ Çalışıyor..." : "▶ Araştırma Döngüsünü Başlat"}
+              {running ? "Calistirilıyor..." : "Otomatik Arastirmayi Baslat"}
             </button>
             <button onClick={loadPromotedStrategies}>
               Aday/Promoted Stratejileri Yükle
@@ -468,7 +505,7 @@ export default function StrategyLab() {
       {promotedStrategies && promotedStrategies.length > 0 && (
         <div style={sectionStyle}>
           <div style={{ ...sectionHeadStyle, background: "linear-gradient(to bottom, #4d8a4d, #2d6a2d)" }}>
-            ✅ Aday / Promoted Stratejiler ({promotedStrategies.length} adet)
+            Onaylanan Stratejiler ({promotedStrategies.length} adet)
           </div>
           <div style={sectionBodyStyle}>
             {promotedStrategies.map((s, i) => s && (
@@ -498,7 +535,7 @@ export default function StrategyLab() {
 
       {/* Kabul Kapısı */}
       <div className="alert alert-warning">
-        <b>⚙ Kabul Kapısı (Tümü Geçmeli)</b><br />
+        <b>Kabul Kapisi — Stratejinin Onaylanmasi Icin Hepsi Saglanmali</b><br />
         <table style={{ marginTop: "4px", borderCollapse: "collapse" }}>
           <tbody>
             {[

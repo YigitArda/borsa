@@ -28,15 +28,20 @@ def _get_sync_session():
 
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_prices")
 def ingest_prices(self, tickers: list[str] | None = None, start: str = "2010-01-01"):
+    """Ingest prices for all tickers in parallel threads (incremental — only new rows)."""
     from app.services.data_ingestion import DataIngestionService
-    session = _get_sync_session()
-    try:
-        svc = DataIngestionService(session)
-        tickers = tickers or settings.mvp_tickers
-        svc.run_full_ingest(tickers, start=start)
-        return {"status": "ok", "tickers": tickers}
-    finally:
-        session.close()
+    tickers = tickers or settings.mvp_tickers
+    results = DataIngestionService.run_full_ingest_parallel(
+        tickers,
+        default_start=start,
+        max_workers=min(len(tickers), 8),
+        db_url=settings.sync_database_url,
+    )
+    errors = {t: v for t, v in results.items() if isinstance(v, str)}
+    if errors:
+        logger.warning("Ingest errors: %s", errors)
+    total_rows = sum(v for v in results.values() if isinstance(v, int))
+    return {"status": "ok", "tickers": tickers, "total_new_rows": total_rows, "errors": errors}
 
 
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.compute_features")
@@ -288,6 +293,112 @@ def evaluate_paper_trades(self, as_of: str | None = None):
         as_of_date = date.fromisoformat(as_of) if as_of else None
         svc = PaperTradingService(session)
         return {"status": "ok", **svc.evaluate_open_positions(as_of=as_of_date)}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.run_calibration")
+def run_calibration(self):
+    """Compute and persist probability calibration for all promoted strategies."""
+    from app.models.strategy import Strategy
+    from app.services.calibration import CalibrationAnalyzer
+    from sqlalchemy import select as sa_select
+
+    session = _get_sync_session()
+    try:
+        promoted = session.execute(
+            sa_select(Strategy).where(Strategy.status == "promoted")
+        ).scalars().all()
+        results = {}
+        analyzer = CalibrationAnalyzer(session)
+        for strategy in promoted:
+            try:
+                analysis = analyzer.analyze_strategy(strategy.id)
+                if analysis:
+                    analyzer.save_analysis(analysis)
+                    results[strategy.id] = {
+                        "brier_score": analysis.get("brier_score"),
+                        "calibration_error": analysis.get("calibration_error"),
+                        "sample_count": analysis.get("sample_count"),
+                    }
+                else:
+                    results[strategy.id] = "insufficient_data"
+            except Exception as exc:
+                logger.warning("Calibration failed for strategy %s: %s", strategy.id, exc)
+                results[strategy.id] = f"error: {exc}"
+        return {"status": "ok", "strategies": results}
+    finally:
+        session.close()
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.check_alpha_decay")
+def check_alpha_decay(self):
+    """Check alpha decay for all promoted strategies using their paper trade returns."""
+    from app.models.strategy import Strategy
+    from app.models.prediction import PaperTrade
+    from app.models.backtest import WalkForwardResult
+    from app.risk.alpha_decay import AlphaDecayMonitor
+    from sqlalchemy import select as sa_select
+    import numpy as np
+
+    session = _get_sync_session()
+    try:
+        promoted = session.execute(
+            sa_select(Strategy).where(Strategy.status == "promoted")
+        ).scalars().all()
+
+        alerts = []
+        for strategy in promoted:
+            try:
+                # Get in-sample baseline Sharpe from walk-forward folds
+                folds = session.execute(
+                    sa_select(WalkForwardResult)
+                    .where(WalkForwardResult.strategy_id == strategy.id)
+                    .order_by(WalkForwardResult.fold)
+                ).scalars().all()
+                if not folds:
+                    continue
+                fold_sharpes = [f.metrics.get("sharpe", 0) for f in folds if f.metrics]
+                baseline_sharpe = float(np.mean(fold_sharpes)) if fold_sharpes else None
+
+                # Get closed paper trade realized returns as live returns
+                trade_rows = session.execute(
+                    sa_select(PaperTrade.realized_return)
+                    .where(
+                        PaperTrade.strategy_id == strategy.id,
+                        PaperTrade.status == "closed",
+                        PaperTrade.realized_return.is_not(None),
+                    )
+                    .order_by(PaperTrade.week_starting)
+                ).scalars().all()
+
+                if len(trade_rows) < 5:
+                    continue
+
+                import pandas as pd
+                live_returns = pd.Series(trade_rows, dtype=float)
+                monitor = AlphaDecayMonitor(min_observations=min(30, max(2, len(live_returns))))
+                monitor.initialize_strategy(
+                    strategy_id=str(strategy.id),
+                    strategy_name=strategy.name or f"strategy_{strategy.id}",
+                    historical_returns=live_returns,
+                    in_sample_sharpe=baseline_sharpe,
+                )
+                alert = None
+                for ret in trade_rows:
+                    alert = monitor.update(str(strategy.id), float(ret)) or alert
+
+                status = monitor.status_for(str(strategy.id))
+                if status and status.get("status") != "HEALTHY":
+                    logger.warning(
+                        "Alpha decay detected for strategy %s: status=%s decay_ratio=%.2f",
+                        strategy.id, status.get("status"), status.get("decay_ratio", 0)
+                    )
+                    alerts.append({"strategy_id": strategy.id, "status": status})
+            except Exception as exc:
+                logger.warning("Alpha decay check failed for strategy %s: %s", strategy.id, exc)
+
+        return {"status": "ok", "alerts": alerts, "checked": len(promoted)}
     finally:
         session.close()
 
@@ -601,7 +712,7 @@ def run_portfolio_simulation_auto(
                 .limit(1)
             ).scalar_one_or_none()
             if not strategy:
-                logger.info("Portfolio simulation: promoted strateji yok, atlanıyor")
+                logger.info("No promoted strategy found; skipping portfolio simulation")
                 return {"status": "skipped", "reason": "no_promoted_strategy"}
             strategy_id = strategy.id
 
@@ -609,7 +720,7 @@ def run_portfolio_simulation_auto(
             from app.services.portfolio_simulation import PortfolioSimulator, SimulationConfig
             from app.models.portfolio import PortfolioSimulation, PortfolioSnapshot
         except ImportError as e:
-            logger.warning("Portfolio simulation modülleri eksik: %s", e)
+            logger.warning("Portfolio simulation modules missing: %s", e)
             return {"status": "skipped", "reason": str(e)}
 
         strategy = session.get(Strategy, strategy_id)
@@ -770,6 +881,9 @@ def run_full_pipeline(
             open_paper=True,
         ),
         run_portfolio_simulation_auto.si(tickers=tickers),
+        evaluate_paper_trades.si(),
+        run_calibration.si(),
+        check_alpha_decay.si(),
     )
     result = workflow.apply_async()
     return {
@@ -793,5 +907,8 @@ def run_full_pipeline(
             "detect_regimes",
             "generate_weekly_predictions",
             "run_portfolio_simulation_auto",
+            "evaluate_paper_trades",
+            "run_calibration",
+            "check_alpha_decay",
         ],
     }
