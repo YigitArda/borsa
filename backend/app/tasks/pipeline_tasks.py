@@ -1,6 +1,6 @@
 ﻿import logging
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from celery import chain
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -112,6 +112,29 @@ def optimize_hyperparams(
         optimizer = HyperparamOptimizer(session, tickers or settings.mvp_tickers)
         best = optimizer.optimize(base_config or BASE_STRATEGY, n_trials=n_trials or settings.bayesian_opt_trials)
         return {"status": "ok", "best_config": best, "optuna": optimizer.status()}
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.run_smallcap_radar")
+def run_smallcap_radar(
+    self,
+    top_n: int = 5,
+    tickers: list[str] | None = None,
+    as_of: str | None = None,
+):
+    from app.services.smallcap_screener import SmallCapScreener
+    from app.services.insider_buying import InsiderBuyingService
+    from app.services.government_contracts import GovernmentContractsService
+    from app.services.institutional_tracker import InstitutionalTrackerService
+
+    with _sync_session() as session:
+        as_of_date = date.fromisoformat(as_of) if as_of else datetime.now(timezone.utc).date()
+        screener = SmallCapScreener(session)
+        universe = tickers or screener.scan_universe()
+        InsiderBuyingService(session).run_all(universe, lookback_days=90, as_of_date=as_of_date)
+        GovernmentContractsService(session).run_all(universe, lookback_days=90, as_of_date=as_of_date)
+        InstitutionalTrackerService(session).run_all(universe, lookback_days=120, as_of_date=as_of_date)
+        results = screener.run_scan(as_of_date, top_n=top_n, tickers=universe)
+        return {"status": "ok", "scan_date": str(as_of_date), "results": results}
 
 
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_macro")
@@ -913,6 +936,7 @@ def run_full_pipeline(
         evaluate_paper_trades.si(),
         run_calibration.si(),
         check_alpha_decay.si(),
+        run_smallcap_radar.si(tickers=tickers),
     )
     result = workflow.apply_async()
     return {
@@ -940,8 +964,8 @@ def run_full_pipeline(
             "evaluate_paper_trades",
             "run_calibration",
             "check_alpha_decay",
+            "run_smallcap_radar",
         ],
     }
-
 
 
