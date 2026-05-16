@@ -31,6 +31,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+async function requestLocal<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    ...init,
+    cache: "no-store",
+    headers: init?.headers,
+  });
+  if (!res.ok) throw new Error(await readError(res, path));
+  return res.json();
+}
+
 async function get<T>(path: string): Promise<T> {
   return request<T>(path);
 }
@@ -130,22 +140,26 @@ export type NotificationSettings = {
 };
 
 export const notifications = {
-  getSettings: () => get<NotificationSettings>("/notifications/settings"),
-  saveSettings: (settings: NotificationSettings) => put<NotificationSettings>("/notifications/settings", settings),
+  getSettings: () => requestLocal<NotificationSettings>("/api/notifications/settings"),
+  saveSettings: (settings: NotificationSettings) => requestLocal<NotificationSettings>("/api/notifications/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  }),
 };
 
 // ArXiv papers and research insights
 export const arxiv = {
   papers: (limit: number = 30, unreadOnly: boolean = false) =>
-    get<any[]>(`/research/papers?limit=${limit}&unread_only=${unreadOnly ? "true" : "false"}`),
+    requestLocal<any[]>(`/api/research/papers?limit=${limit}&unread_only=${unreadOnly ? "true" : "false"}`),
   insights: (status?: string, limit: number = 50) =>
-    get<any[]>(`/research/insights?limit=${limit}${status ? `&status=${encodeURIComponent(status)}` : ""}`),
+    requestLocal<any[]>(`/api/research/insights?limit=${limit}${status ? `&status=${encodeURIComponent(status)}` : ""}`),
   scan: (days: number = 7, maxResults: number = 50) =>
-    post<any>(`/research/papers/scan?days=${days}&max_results=${maxResults}`),
+    requestLocal<any>(`/api/research/papers/scan?days=${days}&max_results=${maxResults}`, { method: "POST" }),
   extract: (limit: number = 10) =>
-    post<any>(`/research/papers/extract?limit=${limit}`),
+    requestLocal<any>(`/api/research/papers/extract?limit=${limit}`, { method: "POST" }),
   markRead: (paperId: number) =>
-    post<any>(`/research/papers/${paperId}/read`),
+    requestLocal<any>(`/api/research/papers/${paperId}/read`, { method: "POST" }),
 };
 
 // Portfolio simulation

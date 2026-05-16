@@ -11,6 +11,11 @@ from pathlib import Path
 
 from _pytest.warning_types import PytestCacheWarning
 
+try:
+    from celery.app.control import DuplicateNodenameWarning
+except Exception:  # pragma: no cover - optional dependency path
+    DuplicateNodenameWarning = None  # type: ignore[assignment]
+
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
 TEST_TMP = ROOT / ".pytest_tmp"
@@ -30,6 +35,8 @@ warnings.filterwarnings(
     category=DeprecationWarning,
 )
 warnings.filterwarnings("ignore", category=PytestCacheWarning)
+if DuplicateNodenameWarning is not None:
+    warnings.filterwarnings("ignore", category=DuplicateNodenameWarning)
 
 # Add backend to path before importing the app
 sys.path.insert(0, str(BACKEND))
