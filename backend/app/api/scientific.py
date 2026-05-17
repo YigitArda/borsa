@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.backtest.hypothesis_registry import HypothesisEntry, HypothesisRegistry
+from app.database import get_db
+from app.models.price import PriceDaily
+from app.models.stock import Stock
 from app.risk.alpha_decay import AlphaDecayMonitor
 from app.services.core_satellite import CoreSatelliteAllocator
 from app.services.trinity_screener import TrinityScreener
@@ -43,9 +48,11 @@ class StatusPayload(BaseModel):
 
 
 class TrinityPayload(BaseModel):
-    price_data: dict[str, list[dict[str, Any]]]
+    price_data: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    tickers: list[str] = Field(default_factory=list)
     fundamentals: dict[str, dict[str, Any]] | None = None
     pre_explosion_only: bool = False
+    lookback_days: int = Field(default=400, ge=60, le=1500)
 
 
 class AllocationPayload(BaseModel):
@@ -94,6 +101,86 @@ def _frames(price_data: dict[str, list[dict[str, Any]]]) -> dict[str, pd.DataFra
             df = df.set_index("date")
         frames[ticker] = df.sort_index()
     return frames
+
+
+async def _price_frames_from_tickers(
+    db: AsyncSession,
+    tickers: list[str],
+    lookback_days: int,
+) -> dict[str, pd.DataFrame]:
+    clean_tickers = list(dict.fromkeys(t.strip().upper() for t in tickers if t.strip()))
+    if not clean_tickers:
+        return {}
+
+    cutoff = date.today() - timedelta(days=lookback_days)
+    result = await db.execute(
+        select(
+            Stock.ticker,
+            PriceDaily.date,
+            PriceDaily.close,
+            PriceDaily.volume,
+        )
+        .join(PriceDaily, PriceDaily.stock_id == Stock.id)
+        .where(
+            Stock.ticker.in_(clean_tickers),
+            PriceDaily.date >= cutoff,
+            PriceDaily.close.is_not(None),
+        )
+        .order_by(Stock.ticker, PriceDaily.date)
+    )
+
+    rows_by_ticker: dict[str, list[dict[str, Any]]] = {ticker: [] for ticker in clean_tickers}
+    for ticker, row_date, close, volume in result.all():
+        rows_by_ticker.setdefault(ticker, []).append(
+            {
+                "date": row_date,
+                "close": close,
+                "volume": volume,
+            }
+        )
+
+    return _frames(rows_by_ticker)
+
+
+async def _ensure_trinity_stocks(db: AsyncSession, tickers: list[str]) -> list[str]:
+    clean_tickers = list(dict.fromkeys(t.strip().upper() for t in tickers if t.strip()))
+    if not clean_tickers:
+        return []
+
+    result = await db.execute(select(Stock.ticker).where(Stock.ticker.in_(clean_tickers)))
+    existing = {row[0] for row in result.all()}
+    created = [ticker for ticker in clean_tickers if ticker not in existing]
+    for ticker in created:
+        db.add(Stock(ticker=ticker, is_active=True))
+    if created:
+        await db.commit()
+    return created
+
+
+def _insufficient_price_tickers(
+    tickers: list[str],
+    price_data: dict[str, pd.DataFrame],
+    min_rows: int = 60,
+) -> list[str]:
+    missing = []
+    for ticker in tickers:
+        frame = price_data.get(ticker)
+        if frame is None or len(frame) < min_rows:
+            missing.append(ticker)
+    return missing
+
+
+def _queue_price_ingest(tickers: list[str]) -> str | None:
+    if not tickers:
+        return None
+    from app.tasks.celery_app import enqueue_task
+    from app.tasks.pipeline_tasks import ingest_prices
+
+    try:
+        task = enqueue_task(ingest_prices, tickers=tickers, start="2010-01-01")
+        return task.id
+    except Exception:
+        return None
 
 
 def _df(rows: list[dict[str, Any]] | None) -> pd.DataFrame | None:
@@ -153,12 +240,40 @@ async def update_hypothesis_status(hypothesis_id: str, payload: StatusPayload):
 
 
 @router.post("/scientific/trinity/screen")
-async def trinity_screen(payload: TrinityPayload):
+async def trinity_screen(payload: TrinityPayload, db: AsyncSession = Depends(get_db)):
+    clean_tickers = list(dict.fromkeys(t.strip().upper() for t in payload.tickers if t.strip()))
+    created_tickers = await _ensure_trinity_stocks(db, clean_tickers)
     price_data = _frames(payload.price_data)
-    scores = TrinityScreener().screen_universe(price_data, payload.fundamentals)
+    if not price_data and clean_tickers:
+        price_data = await _price_frames_from_tickers(db, clean_tickers, payload.lookback_days)
+    insufficient_tickers = _insufficient_price_tickers(clean_tickers, price_data)
+    queued_tickers = list(dict.fromkeys(created_tickers + insufficient_tickers))
+    ingest_task_id = _queue_price_ingest(queued_tickers)
+    trinity = TrinityScreener()
+    scores = trinity.screen_universe(price_data, payload.fundamentals)
+    pre_explosion = trinity.filter_pre_explosion(scores, price_data)
+    pre_explosion_tickers = {score.ticker for score in pre_explosion}
     if payload.pre_explosion_only:
-        scores = TrinityScreener().filter_pre_explosion(scores, price_data)
-    return [score.to_dict() for score in scores]
+        scores = pre_explosion
+    return {
+        "results": [
+            {
+                **score.to_dict(),
+                "total_score": score.combined_score,
+                "pre_explosion": score.ticker in pre_explosion_tickers,
+            }
+            for score in scores
+        ],
+        "queued_tickers": queued_tickers,
+        "created_tickers": created_tickers,
+        "insufficient_price_tickers": insufficient_tickers,
+        "ingest_task_id": ingest_task_id,
+        "message": (
+            "Eksik fiyat verisi olan ticker'lar icin fiyat guncelleme kuyruga alindi."
+            if queued_tickers
+            else None
+        ),
+    }
 
 
 @router.post("/scientific/portfolio/allocate")

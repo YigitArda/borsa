@@ -125,9 +125,14 @@ class GDELTNewsService:
             stmt = pg_insert(NewsArticle).values(
                 url_hash=url_hash,
                 published_at=pub_dt,
+                available_at=pub_dt,
                 source="gdelt",
+                provider_id="gdelt_news",
                 headline=title[:500],
                 ticker_mentions=[ticker],
+                source_quality=0.8,
+                fallback_used=False,
+                raw_payload=art,
             )
             stmt = stmt.on_conflict_do_nothing(index_elements=["url_hash"])
             self.session.execute(stmt)

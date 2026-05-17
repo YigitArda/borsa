@@ -137,6 +137,40 @@ def run_smallcap_radar(
         return {"status": "ok", "scan_date": str(as_of_date), "results": results}
 
 
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.sync_data_connectors")
+def sync_data_connectors(self):
+    from app.services.connectors.orchestrator import ConnectorOrchestrator
+
+    with _sync_session() as session:
+        connectors = ConnectorOrchestrator(session).sync_registry()
+        return {"status": "ok", "connectors": connectors}
+
+
+@celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_connectors")
+def ingest_connectors(
+    self,
+    categories: list[str] | None = None,
+    providers: list[str] | None = None,
+    tickers: list[str] | None = None,
+    start: str = "2010-01-01",
+    as_of: str | None = None,
+    lookback_days: int | None = None,
+):
+    from app.services.connectors.orchestrator import ConnectorOrchestrator
+
+    with _sync_session() as session:
+        as_of_date = date.fromisoformat(as_of) if as_of else None
+        response = ConnectorOrchestrator(session).run(
+            categories=categories,
+            provider_ids=providers,
+            tickers=tickers or settings.mvp_tickers,
+            start=start,
+            as_of_date=as_of_date,
+            lookback_days=lookback_days,
+        )
+        return response
+
+
 @celery_app.task(bind=True, name="app.tasks.pipeline_tasks.ingest_macro")
 def ingest_macro(self, start: str = "2010-01-01", include_external_sources: bool = True):
     from app.services.macro_data import MacroDataService
@@ -967,5 +1001,4 @@ def run_full_pipeline(
             "run_smallcap_radar",
         ],
     }
-
 

@@ -24,6 +24,32 @@ export default async function WeeklyPicksPage() {
         Her Cuma aksami guncellenir.
       </div>
 
+      <div className="box" style={{ marginBottom: "12px" }}>
+        <div className="box-head">Tabloyu Nasil Okumali?</div>
+        <div className="box-body">
+          <table className="data-table" style={{ marginBottom: 0 }}>
+            <tbody>
+              <tr>
+                <td><b>Kazanma Olasiligi</b></td>
+                <td>1 haftada hedef getiriye ulasma ihtimali. %65 ve ustu daha guclu sinyal kabul edilir.</td>
+              </tr>
+              <tr>
+                <td><b>Kayip Olasiligi</b></td>
+                <td>1 haftada sert kayip ihtimali. Dusuk olmasi tercih edilir; yuksekse sinyal risklidir.</td>
+              </tr>
+              <tr>
+                <td><b>Beklenen Getiri</b></td>
+                <td>Modelin ortalama yon tahmini. Olasilik yuksek ama beklenen getiri dusukse sinyal zayif olabilir.</td>
+              </tr>
+              <tr>
+                <td><b>Guven Seviyesi</b></td>
+                <td>Modelin veri kalitesi, sinyal gucu ve risk filtresine gore verdigi ozet etikettir.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {picks.length === 0 ? (
         <div className="alert alert-warning">
           <b>Bu hafta icin sinyal bulunamadi.</b> Sinyal uretmek icin{" "}

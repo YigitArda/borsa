@@ -12,6 +12,17 @@ export default async function DataQualityPage() {
     <div>
       <h1>📋 Veri Kalitesi Raporu</h1>
 
+      <div className="info-box" style={{ marginBottom: "12px" }}>
+        <b>Neden onemli?</b> Modelin tahmini ancak kullandigi veri kadar guvenilirdir.
+        Eksik fiyat, eski makro seri veya az feature varsa sinyal kaliteli gorunse bile karar zayif olabilir.
+        Sinyallere bakmadan once bu sayfada "TAMAM" durumunu kontrol et.
+      </div>
+
+      <div className="alert alert-info" style={{ marginBottom: "12px" }}>
+        <b>Pratik kural:</b> Eksik veri varsa once Strategy Laboratuvari'ndan pipeline'i calistir.
+        Veri tamamlanmadan uretilen backtest ve sinyaller arastirma icin bile temkinli okunmalidir.
+      </div>
+
       <table className="data-table" style={{ width: "400px", marginBottom: "12px" }}>
         <thead>
           <tr><th>Metrik</th><th>Değer</th></tr>

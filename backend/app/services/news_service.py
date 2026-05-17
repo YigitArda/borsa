@@ -10,15 +10,13 @@ import logging
 import re
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.models.stock import Stock
 from app.models.news import NewsArticle, NewsAnalysis
 from app.services.social_sentiment_common import get_vader_analyzer
-from app.services.gdelt_news import GDELTNewsService
-from app.services.sec_news import SECNewsService
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +76,14 @@ class NewsService:
                 article = NewsArticle(
                     url_hash=url_hash,
                     published_at=pub_dt,
+                    available_at=pub_dt,
                     source=item.get("publisher"),
+                    provider_id="yfinance_news",
                     headline=headline[:500],
                     ticker_mentions=[ticker],
+                    source_quality=0.55,
+                    fallback_used=True,
+                    raw_payload=dict(item),
                 )
                 self.session.add(article)
                 self.session.flush()
@@ -128,14 +131,18 @@ class NewsService:
         import numpy as np
 
         week_start = week_ending - timedelta(days=7)
+        from datetime import datetime as dt
+        week_start_dt = dt(week_start.year, week_start.month, week_start.day)
+        week_end_dt = dt(week_ending.year, week_ending.month, week_ending.day)
+        available_expr = func.coalesce(NewsArticle.available_at, NewsArticle.published_at)
 
         analyses = self.session.execute(
             select(NewsAnalysis, NewsArticle)
             .join(NewsArticle, NewsAnalysis.news_id == NewsArticle.id)
             .where(
                 NewsAnalysis.stock_id == stock_id,
-                NewsArticle.published_at >= week_start,
-                NewsArticle.published_at < week_ending,
+                available_expr >= week_start_dt,
+                available_expr < week_end_dt,
             )
         ).all()
 
@@ -160,7 +167,6 @@ class NewsService:
         # Using today would cause lookahead — a 2018 article would appear
         # "very old" and get near-zero weight regardless of its actual recency
         # within the decision week.
-        from datetime import datetime as dt
         reference = dt(
             week_ending.year, week_ending.month, week_ending.day, tzinfo=timezone.utc
         )
@@ -192,30 +198,12 @@ class NewsService:
         }
 
     def run_all(self, tickers: list[str]) -> dict:
-        results = {}
-        for ticker in tickers:
-            try:
-                results[ticker] = self.ingest_news_for_ticker(ticker)
-            except Exception as e:
-                logger.error(f"News failed {ticker}: {e}")
-                results[ticker] = 0
+        from app.services.connectors.orchestrator import ConnectorOrchestrator
 
-        # GDELT recent (last 7 days)
-        try:
-            gdelt = GDELTNewsService(self.session)
-            gdelt_results = gdelt.ingest_recent(tickers)
-            for t, n in gdelt_results.items():
-                results[t] = results.get(t, 0) + n
-        except Exception as e:
-            logger.error("GDELT recent ingest failed: %s", e)
-
-        # SEC EDGAR recent (last 30 days)
-        try:
-            sec = SECNewsService(self.session)
-            sec_results = sec.ingest_recent(tickers)
-            for t, n in sec_results.items():
-                results[t] = results.get(t, 0) + n
-        except Exception as e:
-            logger.error("SEC news recent ingest failed: %s", e)
-
+        response = ConnectorOrchestrator(self.session).run(categories=["news"], tickers=tickers)
+        results = {ticker: 0 for ticker in tickers}
+        for provider in response.get("providers", []):
+            tickers_detail = provider.get("details", {}).get("tickers", {})
+            for ticker, rows in tickers_detail.items():
+                results[ticker] = results.get(ticker, 0) + int(rows or 0)
         return results
