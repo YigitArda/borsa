@@ -226,6 +226,13 @@ export default async function HomePage() {
         <div className="box-head">Nasil Baslarim?</div>
         <div className="box-body">
           <div className="step-row">
+            <div className="step-item done">
+              <div style={{ fontWeight: "bold" }}>0. Veri Kaynaklari</div>
+              <div style={{ marginTop: "2px" }}>
+                <Link href="/data-sources">Connector durumu</Link>nu kontrol et.
+                API key eksikse .env dosyasına ekle.
+              </div>
+            </div>
             <div className={`step-item ${strategies.length > 0 ? "done" : "active"}`}>
               <div style={{ fontWeight: "bold" }}>1. Strateji Hazirla</div>
               <div style={{ marginTop: "2px" }}>

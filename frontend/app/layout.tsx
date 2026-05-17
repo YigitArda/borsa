@@ -16,6 +16,7 @@ const navLinks = [
   { href: "/portfolio-simulation", label: "Portfoy Simulasyonu", tip: "Sinyaller portfoye donusseydi sermaye ve getiri nasil ilerlerdi?" },
   { href: "/risk-warnings", label: "Risk Uyarilari", tip: "Kill switch, drawdown, veri sorunu ve sistemin durdurma nedenleri." },
   { href: "/data-quality", label: "Veri Kalitesi", tip: "Eksik, eski veya guvenilmez veri var mi? Modelden once burayi kontrol et." },
+  { href: "/data-sources", label: "Connector Durumu", tip: "Polygon, GDELT, SEC, IMF, Kraken gibi 13 veri kaynaginin anlık durumu ve API key takibi." },
   { href: "/model-comparison", label: "Model Karsilastirma", tip: "Farkli modelleri ayni metriklerle yan yana karsilastir." },
   { href: "/feature-importance", label: "Hangi Faktorler Etkili?", tip: "Modelin kararda en cok hangi veriye agirlik verdigini gosterir." },
   { href: "/trinity-screener", label: "Hisse Taramasi", tip: "Deger, kalite ve momentum puanlariyla hizli hisse elemesi yap." },
@@ -59,7 +60,8 @@ const sidebarSections = [
     title: "Veri & Sistem",
     links: [
       { href: "/data-quality", label: "Veri Kalitesi", tip: "Veri eksiklikleri ve tutarsizliklar" },
-      { href: "/data-status", label: "Veri Kaynaklari", tip: "Tum veri kaynaklari ve kapsam" },
+      { href: "/data-status", label: "Veri Kapsami", tip: "Fiyat, feature ve label veri araliklari" },
+      { href: "/data-sources", label: "Connector Durumu", tip: "13 veri kaynagi (Polygon, GDELT, SEC, IMF...) ve API key durumu" },
       { href: "/arxiv", label: "Arastirma Makaleleri", tip: "Guncel finans arastirmalari" },
       { href: "/hypotheses", label: "Arastirma Hipotezleri", tip: "Test edilecek hipotezler" },
       { href: "/admin", label: "Sistem Yonetimi", tip: "Admin paneli ve job takibi" },
@@ -184,15 +186,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="guide-box">
               <b>Okuma Sirasi</b>
               <br />
-              1. <a href="/data-quality">Veri saglam mi?</a>
+              1. <a href="/data-sources">Connector OK mi?</a>
               <br />
-              2. <a href="/weekly-picks">Sinyal var mi?</a>
+              2. <a href="/data-quality">Veri saglam mi?</a>
               <br />
-              3. <a href="/stocks">Hisseyi incele</a>
+              3. <a href="/weekly-picks">Sinyal var mi?</a>
               <br />
-              4. <a href="/risk-warnings">Riski kontrol et</a>
+              4. <a href="/stocks">Hisseyi incele</a>
+              <br />
+              5. <a href="/risk-warnings">Riski kontrol et</a>
               <hr />
-              <b>Kural:</b> Sinyal tek basina karar degildir; veri kalitesi ve risk ayni anda temiz olmali.
+              <b>Kural:</b> Sinyal tek basina karar degildir; connector, veri kalitesi ve risk ayni anda temiz olmali.
             </div>
             <div
               style={{
@@ -204,10 +208,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 fontFamily: "Tahoma,sans-serif",
               }}
             >
-              <b>Sistem</b>
+              <b>Veri Kaynaklari</b>
               <br />
-              Pipeline: <span className="text-green">HAZIR</span>
+              <a href="/data-sources">13 connector</a> kayitli
               <br />
+              <a href="/data-quality">Kalite &raquo;</a>
+              {" | "}
+              <a href="/data-status">Kapsam &raquo;</a>
+              <hr style={{ margin: "4px 0" }} />
               Her Cumartesi guncellenir
             </div>
           </div>
@@ -216,10 +224,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </div>
 
         <div className="status-bar">
-          <span className="status-segment">Hazir</span>
-          <span className="status-segment">localhost:3000</span>
-          <span className="status-segment">20 hisse izleniyor</span>
-          <span>Lokal sunucu</span>
+          <span className="status-segment">Borsa Research Engine v1.0</span>
+          <span className="status-segment">SP500 — Top 20 likit hisse</span>
+          <span className="status-segment">13 veri connectoru</span>
+          <span className="status-segment">Haftalik pipeline: Her Cumartesi</span>
+          <span style={{ marginLeft: "auto", color: "#cc0000", fontWeight: "bold" }}>
+            Yatirim tavsiyesi degildir
+          </span>
         </div>
       </body>
     </html>
