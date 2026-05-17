@@ -26,6 +26,7 @@ from app.api.jobs import router as jobs_router
 from app.api.selected_stocks import router as selected_stocks_router
 from app.api.export import router as export_router
 from app.api.scientific import router as scientific_router
+from app.api.data_sources import router as data_sources_router
 from app.config import settings
 from app.middleware.logging import LoggingMiddleware
 from app.logging_config import configure_logging
@@ -75,6 +76,7 @@ _WRITE_ROUTES = {
     "/research/optimize",
     "/scientific/",
     "/notifications/",
+    "/data-sources/",
     "/api/v1/weekly-pipeline",
 }
 
@@ -266,6 +268,7 @@ app.include_router(jobs_router)
 app.include_router(selected_stocks_router)
 app.include_router(export_router)
 app.include_router(scientific_router)
+app.include_router(data_sources_router)
 
 app.add_api_websocket_route("/ws", websocket_endpoint)
 

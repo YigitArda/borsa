@@ -18,6 +18,9 @@ class PriceDaily(Base):
     adj_close: Mapped[float | None] = mapped_column(Float)
     volume: Mapped[int | None] = mapped_column(BigInteger)
     data_source: Mapped[str] = mapped_column(String(50), default="yfinance")
+    available_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    provider_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    source_quality: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

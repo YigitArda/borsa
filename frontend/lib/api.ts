@@ -196,7 +196,7 @@ export const scientific = {
   registerHypothesis: (payload: any) => post<any>("/scientific/hypotheses", payload),
   updateStatus: (id: string, status: string, results?: any) =>
     post<any>(`/scientific/hypotheses/${id}/status`, { status, results: results ?? null }),
-  trinityScreen: (payload: any) => post<any[]>("/scientific/trinity/screen", payload),
+  trinityScreen: (payload: any) => post<any>("/scientific/trinity/screen", payload),
   allocate: (payload: any) => post<any>("/scientific/portfolio/allocate", payload),
   metaSelect: (payload: any) => post<any>("/scientific/meta/select", payload),
   decayCheck: (payload: any) => post<any>("/scientific/decay/check", payload),

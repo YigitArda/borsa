@@ -8,22 +8,22 @@ export const metadata: Metadata = {
 };
 
 const navLinks = [
-  { href: "/", label: "Ana Sayfa", tip: "Genel bakis: sinyaller, hisseler ve sistem durumu" },
-  { href: "/weekly-picks", label: "Bu Haftanin Sinyalleri", tip: "Modelin bu hafta onerilen hisseleri ve tahminleri" },
-  { href: "/stocks", label: "Hisseler", tip: "Takip edilen tum hisselerin listesi ve detaylari" },
-  { href: "/strategy-lab", label: "Strateji Laboratuvari", tip: "Yeni strateji dene, gecmis test et, model egit" },
-  { href: "/backtest", label: "Gecmis Test Sonuclari", tip: "Yapilan tum backtest ve strateji gecmis performanslari" },
-  { href: "/portfolio-simulation", label: "Portfoy Simulasyonu", tip: "Sermaye dagitimi ve portfoy performans simulasyonu" },
-  { href: "/risk-warnings", label: "Risk Uyarilari", tip: "Sistem riskleri, durdurma kosullari ve uyarilar" },
-  { href: "/data-quality", label: "Veri Kalitesi", tip: "Veri eksiklikleri ve guvenirligi" },
-  { href: "/model-comparison", label: "Model Karsilastirma", tip: "Farkli modellerin performans karsilastirmasi" },
-  { href: "/feature-importance", label: "Hangi Faktorler Etkili?", tip: "Modelin en cok hangi verilere baktigini goster" },
-  { href: "/trinity-screener", label: "Hisse Taramasi", tip: "Deger+Kalite+Momentum kriterleriyle hisse tara" },
-  { href: "/research/regime", label: "Piyasa Ortami Analizi", tip: "Dusuk/orta/yuksek volatilite donemlerinde strateji performansi" },
-  { href: "/research/calibration", label: "Tahmin Guvenilirligi", tip: "Model tahminlerinin gerceklesmeyle ne kadar uyustugu" },
-  { href: "/ablation", label: "Faktor Etki Analizi", tip: "Hangi faktor olmadan model daha iyi/kotu calisiyor" },
-  { href: "/arxiv", label: "Akademik Arastirmalar", tip: "Guncel finans arastirma makaleleri ve icgoru kuyrugu" },
-  { href: "/hypotheses", label: "Arastirma Hipotezleri", tip: "Test edilecek ve izlenecek yatirim hipotezleri" },
+  { href: "/", label: "Ana Sayfa", tip: "Sistemin bugunku durumu: veri, sinyal, performans ve risk ozeti." },
+  { href: "/weekly-picks", label: "Bu Haftanin Sinyalleri", tip: "Modelin bu hafta sectigi hisseler, olasiliklar ve sanal islem sonucu." },
+  { href: "/stocks", label: "Hisseler", tip: "Takip edilen hisseler. Detay sayfasinda fiyat, feature ve haber verisi incelenir." },
+  { href: "/strategy-lab", label: "Strateji Laboratuvari", tip: "Veriyi guncelle, model sec, backtest yap ve yeni strateji adaylari uret." },
+  { href: "/backtest", label: "Gecmis Test Sonuclari", tip: "Stratejilerin gecmiste nasil davrandigini ve riskini kontrol et." },
+  { href: "/portfolio-simulation", label: "Portfoy Simulasyonu", tip: "Sinyaller portfoye donusseydi sermaye ve getiri nasil ilerlerdi?" },
+  { href: "/risk-warnings", label: "Risk Uyarilari", tip: "Kill switch, drawdown, veri sorunu ve sistemin durdurma nedenleri." },
+  { href: "/data-quality", label: "Veri Kalitesi", tip: "Eksik, eski veya guvenilmez veri var mi? Modelden once burayi kontrol et." },
+  { href: "/model-comparison", label: "Model Karsilastirma", tip: "Farkli modelleri ayni metriklerle yan yana karsilastir." },
+  { href: "/feature-importance", label: "Hangi Faktorler Etkili?", tip: "Modelin kararda en cok hangi veriye agirlik verdigini gosterir." },
+  { href: "/trinity-screener", label: "Hisse Taramasi", tip: "Deger, kalite ve momentum puanlariyla hizli hisse elemesi yap." },
+  { href: "/research/regime", label: "Piyasa Ortami Analizi", tip: "Strateji boga, ayı veya yatay piyasada nasil calisiyor?" },
+  { href: "/research/calibration", label: "Tahmin Guvenilirligi", tip: "Model %60 dediğinde gercekte yaklasik %60 tutuyor mu?" },
+  { href: "/ablation", label: "Faktor Etki Analizi", tip: "Bir faktor cikarilinca model iyilesiyor mu kotulesiyor mu?" },
+  { href: "/arxiv", label: "Akademik Arastirmalar", tip: "Yeni finans makaleleri ve sisteme eklenebilecek fikirler." },
+  { href: "/hypotheses", label: "Arastirma Hipotezleri", tip: "Test edilecek fikirler, durumlari ve karar notlari." },
 ];
 
 const sidebarSections = [
@@ -182,15 +182,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             ))}
 
             <div className="guide-box">
-              <b>Nasil Kullanilir?</b>
+              <b>Okuma Sirasi</b>
               <br />
-              1. <a href="/weekly-picks">Sinyallere</a> bak
+              1. <a href="/data-quality">Veri saglam mi?</a>
               <br />
-              2. <a href="/stocks">Hisse</a> arastir
+              2. <a href="/weekly-picks">Sinyal var mi?</a>
               <br />
-              3. <a href="/strategy-lab">Strateji</a> test et
+              3. <a href="/stocks">Hisseyi incele</a>
               <br />
-              4. <a href="/risk-warnings">Riskleri</a> takip et
+              4. <a href="/risk-warnings">Riski kontrol et</a>
+              <hr />
+              <b>Kural:</b> Sinyal tek basina karar degildir; veri kalitesi ve risk ayni anda temiz olmali.
             </div>
             <div
               style={{

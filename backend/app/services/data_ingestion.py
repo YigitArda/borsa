@@ -6,7 +6,7 @@ they return today's restated values. Price/OHLCV data is reliable.
 """
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 from sqlalchemy import func, select, text
@@ -192,6 +192,10 @@ class DataIngestionService:
                 "close": stmt.excluded.close,
                 "adj_close": stmt.excluded.adj_close,
                 "volume": stmt.excluded.volume,
+                "data_source": stmt.excluded.data_source,
+                "available_at": stmt.excluded.available_at,
+                "provider_id": stmt.excluded.provider_id,
+                "source_quality": stmt.excluded.source_quality,
             },
         )
         self.session.execute(stmt)
@@ -210,9 +214,10 @@ class DataIngestionService:
 
         rows = []
         for _, row in df.iterrows():
+            price_date = row.get("date_", row.get("date")).date() if hasattr(row.get("date_", row.get("date")), "date") else row.get("date_", row.get("date"))
             rows.append({
                 "stock_id": stock_id,
-                "date": row.get("date_", row.get("date")).date() if hasattr(row.get("date_", row.get("date")), "date") else row.get("date_", row.get("date")),
+                "date": price_date,
                 "open": float(row["open"]) if pd.notna(row.get("open")) else None,
                 "high": float(row["high"]) if pd.notna(row.get("high")) else None,
                 "low": float(row["low"]) if pd.notna(row.get("low")) else None,
@@ -221,6 +226,10 @@ class DataIngestionService:
                     float(row["close"]) if pd.notna(row.get("close")) else None
                 ),
                 "volume": int(row["volume"]) if pd.notna(row.get("volume")) else None,
+                "data_source": "yfinance",
+                "available_at": datetime.combine(price_date, datetime.min.time()),
+                "provider_id": "yfinance_prices",
+                "source_quality": 0.75,
             })
         return rows
 

@@ -57,6 +57,17 @@ class Settings(BaseSettings):
     api_key: str | None = None
     jwt_secret: str | None = None
     fred_api_key: str | None = None
+    polygon_api_key: str | None = None
+    adanos_api_key: str | None = None
+    adanos_base_url: str | None = None
+    kraken_api_key: str | None = None
+    kraken_api_secret: str | None = None
+    kraken_pairs: list[str] = ["XBTUSD", "ETHUSD"]
+    akshare_enabled: bool = False
+    worldbank_default_countries: list[str] = ["US"]
+    imf_default_countries: list[str] = ["USA"]
+    connector_request_timeout: int = 20
+    connector_max_retries: int = 3
 
     # Reddit API (https://www.reddit.com/prefs/apps → "script" app)
     reddit_client_id: str | None = None

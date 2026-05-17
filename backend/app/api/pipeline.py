@@ -27,6 +27,13 @@ class TickerList(BaseModel):
     tickers: list[str] | None = None
 
 
+class ConnectorRunBody(BaseModel):
+    categories: list[str] | None = None
+    providers: list[str] | None = None
+    tickers: list[str] | None = None
+    lookback_days: int | None = None
+
+
 class ImportPath(BaseModel):
     path: str
     data_source: str | None = None
@@ -77,6 +84,23 @@ async def trigger_news(body: TickerList | None = None):
     from app.tasks.pipeline_tasks import ingest_news
     tickers = body.tickers if body else None
     task = enqueue_task(ingest_news, tickers=tickers)
+    return {"task_id": task.id, "status": "queued"}
+
+
+@router.post("/connectors")
+async def trigger_connectors(body: ConnectorRunBody | None = None, start: str = "2010-01-01", as_of: str | None = None):
+    from app.tasks.pipeline_tasks import ingest_connectors
+
+    payload = body or ConnectorRunBody()
+    task = enqueue_task(
+        ingest_connectors,
+        categories=payload.categories,
+        providers=payload.providers,
+        tickers=payload.tickers,
+        start=start,
+        as_of=as_of,
+        lookback_days=payload.lookback_days,
+    )
     return {"task_id": task.id, "status": "queued"}
 
 

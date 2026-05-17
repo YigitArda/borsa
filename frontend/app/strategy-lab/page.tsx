@@ -237,6 +237,38 @@ export default function StrategyLab() {
         Hicbir sey gercek para ile yapilmamaktadir.
       </div>
 
+      <div className="alert alert-info" style={{ marginBottom: "12px" }}>
+        <b>Yeni baslayan icin onerilen ayar:</b> LightGBM, hedef olarak 1 haftada %2+ kazanim, esik 0.50,
+        max 5 pozisyon ve likidite filtresi acik. Once "Tumumunu Calistir" ile veriyi guncelle, sonra
+        "Gecmis Veri Testini Baslat" ile sonuc kalitesini kontrol et.
+      </div>
+
+      <div className="box" style={{ marginBottom: "12px" }}>
+        <div className="box-head">Sonuclari Nasil Degerlendirmeli?</div>
+        <div className="box-body">
+          <table className="data-table" style={{ marginBottom: 0 }}>
+            <tbody>
+              <tr>
+                <td><b>Sharpe</b></td>
+                <td>Risk duzeltilmis getiri. 0.5 ustu kabul edilebilir, 1.0 ustu guclu sayilir.</td>
+              </tr>
+              <tr>
+                <td><b>Win Rate</b></td>
+                <td>Kazanan islem orani. Tek basina yeterli degildir; getiri ve drawdown ile birlikte okunur.</td>
+              </tr>
+              <tr>
+                <td><b>Max DD</b></td>
+                <td>En kotu geri cekilme. Strateji kârlı olsa bile bu deger buyukse risk yuksektir.</td>
+              </tr>
+              <tr>
+                <td><b>Permutation p</b></td>
+                <td>Sonucun sans eseri olma ihtimali. 0.10 alti daha guvenilir kabul edilir.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* 1. Hisse Evreni */}
       <div style={sectionStyle}>
         <div style={sectionHeadStyle}>1. Hisse Evreni — Hangi Hisselere Bakacaksin?</div>

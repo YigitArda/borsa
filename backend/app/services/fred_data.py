@@ -8,7 +8,7 @@ macro data whenever a FRED key is available.
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import pandas as pd
@@ -86,11 +86,15 @@ class FREDDataService:
         for dt, value in series.items():
             if pd.isna(value):
                 continue
+            obs_date = dt.date() if hasattr(dt, "date") else dt
             rows.append(
                 {
                     "indicator_code": indicator_code,
-                    "date": dt.date() if hasattr(dt, "date") else dt,
+                    "date": obs_date,
+                    "available_at": datetime.combine(obs_date, datetime.min.time()),
+                    "provider_id": "fred_macro",
                     "value": float(value),
+                    "source_quality": 0.95,
                 }
             )
 
@@ -100,7 +104,12 @@ class FREDDataService:
         stmt = pg_insert(MacroIndicator).values(rows)
         stmt = stmt.on_conflict_do_update(
             index_elements=["indicator_code", "date"],
-            set_={"value": stmt.excluded.value},
+            set_={
+                "available_at": stmt.excluded.available_at,
+                "provider_id": stmt.excluded.provider_id,
+                "value": stmt.excluded.value,
+                "source_quality": stmt.excluded.source_quality,
+            },
         )
         self.session.execute(stmt)
         self.session.commit()

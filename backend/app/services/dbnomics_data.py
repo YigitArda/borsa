@@ -7,7 +7,7 @@ DBnomics exposes many international macro series without requiring an API key.
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import pandas as pd
@@ -75,11 +75,15 @@ class DBnomicsDataService:
 
         rows: list[dict[str, Any]] = []
         for _, row in df.iterrows():
+            obs_date = row["date"].date()
             rows.append(
                 {
                     "indicator_code": indicator_code,
-                    "date": row["date"].date(),
+                    "date": obs_date,
+                    "available_at": datetime.combine(obs_date, datetime.min.time()),
+                    "provider_id": "dbnomics_macro",
                     "value": float(row[value_col]),
+                    "source_quality": 0.8,
                 }
             )
 
@@ -89,7 +93,12 @@ class DBnomicsDataService:
         stmt = pg_insert(MacroIndicator).values(rows)
         stmt = stmt.on_conflict_do_update(
             index_elements=["indicator_code", "date"],
-            set_={"value": stmt.excluded.value},
+            set_={
+                "available_at": stmt.excluded.available_at,
+                "provider_id": stmt.excluded.provider_id,
+                "value": stmt.excluded.value,
+                "source_quality": stmt.excluded.source_quality,
+            },
         )
         self.session.execute(stmt)
         self.session.commit()

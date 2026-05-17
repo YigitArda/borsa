@@ -48,11 +48,35 @@ export default async function HomePage() {
       </div>
 
       {/* Ana metrik kartları */}
+      <div className="box" style={{ marginBottom: "12px" }}>
+        <div className="box-head">Karar Akisi Nasil Okunur?</div>
+        <div className="box-body">
+          <div className="step-row" style={{ marginBottom: 0 }}>
+            <div className="step-item done">
+              <div style={{ fontWeight: "bold" }}>1. Veri</div>
+              <div style={{ marginTop: "2px" }}>Fiyat, makro, haber ve finansal veri once guncel olmalidir.</div>
+            </div>
+            <div className="step-item done">
+              <div style={{ fontWeight: "bold" }}>2. Model</div>
+              <div style={{ marginTop: "2px" }}>Model gecmisteki benzer haftalardan olasilik uretir.</div>
+            </div>
+            <div className="step-item active">
+              <div style={{ fontWeight: "bold" }}>3. Sinyal</div>
+              <div style={{ marginTop: "2px" }}>Kazanma olasiligi ve beklenen getiri birlikte okunur.</div>
+            </div>
+            <div className="step-item">
+              <div style={{ fontWeight: "bold" }}>4. Kontrol</div>
+              <div style={{ marginTop: "2px" }}>Paper trade sonucu, risk uyarisi ve veri kalitesiyle dogrulanir.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "8px", marginBottom: "12px" }}>
         <div className="metric-card">
           <div className="metric-label">Takip Edilen Hisse</div>
           <div className="metric-value" style={{ color: "#003366" }}>{stocks.length}</div>
-          <div className="metric-sub">SP500 evreni</div>
+          <div className="metric-sub">modelin taradigi evren</div>
         </div>
 
         <div className="metric-card">
@@ -60,13 +84,13 @@ export default async function HomePage() {
           <div className="metric-value" style={{ color: strategies.length > 0 ? "#006600" : "#666" }}>
             {strategies.length}
           </div>
-          <div className="metric-sub">aktif model</div>
+          <div className="metric-sub">kabul kapisini gecen model</div>
         </div>
 
         <div className="metric-card">
           <div className="metric-label">Simule Edilen Islem</div>
           <div className="metric-value">{closedTrades}</div>
-          <div className="metric-sub">{openTrades} acik bekliyor</div>
+          <div className="metric-sub">{openTrades} acik, gercek para yok</div>
         </div>
 
         <div className="metric-card">
@@ -90,11 +114,17 @@ export default async function HomePage() {
           >
             {avgReturn != null ? pct(avgReturn, 2) : "—"}
           </div>
-          <div className="metric-sub">islem basina</div>
+          <div className="metric-sub">kapali sanal islem basina</div>
         </div>
       </div>
 
       {/* Basari oranı açıklaması */}
+      <div className="alert alert-info" style={{ marginBottom: "12px" }}>
+        <b>Metrikleri yorumlama:</b> Onaylanmis strateji sayisi kalite filtresinden gecen modelleri, basari orani
+        kapanmis sanal islemlerde hedefin ne kadar tuttugunu, ortalama getiri ise hedef tutmasa bile toplam
+        yonun pozitif mi negatif mi oldugunu gosterir.
+      </div>
+
       {hasData && hitRate != null && (
         <div className={`alert ${hitRate >= 0.45 ? "alert-success" : "alert-warning"}`} style={{ marginBottom: "12px" }}>
           {hitRate >= 0.45 ? (
